@@ -27,6 +27,7 @@ from userbot.engine import UserbotEngine
 from controlbot.bot import build_application
 from database.db import Database
 from utils.logger import setup_logging, get_logger
+from utils.cleanup import CleanupScheduler
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
 
@@ -93,6 +94,14 @@ def main():
     db = Database()
     logger.info("Database ready.")
 
+    # --- One-shot startup cleanup (runs BEFORE the asyncio event loop) ---
+    scheduler = CleanupScheduler(db)
+    try:
+        startup_report = scheduler.run_full_cleanup()
+        logger.info("Startup cleanup: %s", startup_report.summary())
+    except Exception as e:
+        logger.warning("Startup cleanup failed (continuing anyway): %s", e)
+
     # --- Build PTB application (Control Bot) ---
     ptb_app = build_application(db)
 
@@ -124,6 +133,11 @@ def main():
             await asyncio.sleep(RESTART_HOURS * 3600)
             logger.warning("Auto-restart triggered (%dh). Exiting for clean restart...", RESTART_HOURS)
             shutdown_event.set()
+
+        # ── Periodic disk & history cleanup (every CLEANUP_INTERVAL_HOURS, default 24) ──
+        async def _auto_cleanup():
+            """Prune history rows, VACUUM DB, clear __pycache__ & orphan log files."""
+            await scheduler.run_periodically(shutdown_event)
 
         async def _run_ptb():
             """Run PTB polling in a task."""
@@ -171,10 +185,11 @@ def main():
         ub_task = asyncio.create_task(_run_userbot())
         gc_task = asyncio.create_task(_memory_cleaner())
         restart_task = asyncio.create_task(_auto_restart())
+        cleanup_task = asyncio.create_task(_auto_cleanup())
 
         # Wait for any task to finish
         done, pending = await asyncio.wait(
-            [ptb_task, ub_task, gc_task, restart_task],
+            [ptb_task, ub_task, gc_task, restart_task, cleanup_task],
             return_when=asyncio.FIRST_COMPLETED,
         )
 

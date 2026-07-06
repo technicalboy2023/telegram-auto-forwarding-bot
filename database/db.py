@@ -417,6 +417,32 @@ class Database:
     #  Cleanup
     # ──────────────────────────────────────────────
 
+    def prune_history(self, retention_days: int) -> int:
+        """Delete forward_history rows older than retention_days. Returns rows deleted."""
+        if retention_days <= 0:
+            return 0
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM forward_history "
+                "WHERE forwarded_at < datetime('now', ?)",
+                (f"-{int(retention_days)} days",),
+            )
+            self.conn.commit()
+            deleted = cur.rowcount
+            if deleted:
+                logger.info("Pruned %d history rows older than %d days.", deleted, retention_days)
+            return deleted
+
+    def vacuum(self) -> None:
+        """Rebuild the DB to reclaim disk space after deletes.
+        Must run outside a transaction; uses short exclusive lock."""
+        with self._lock:
+            try:
+                self.conn.execute("VACUUM")
+                logger.info("VACUUM complete — disk space reclaimed.")
+            except sqlite3.OperationalError as e:
+                logger.warning("VACUUM skipped: %s", e)
+
     def close(self) -> None:
         self.conn.close()
         logger.info("Database connection closed.")
