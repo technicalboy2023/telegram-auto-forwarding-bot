@@ -531,7 +531,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  `/pause` — Pause forwarding\n"
         "  `/resume` — Resume forwarding\n"
         "  `/stats` — Statistics\n"
-        "  `/set_delay 5` — Set delay between forwards (seconds)\n",
+        "  `/set_delay 5` — Set delay between forwards \(seconds\)\n",
         parse_mode="MarkdownV2",
     )
 
