@@ -15,10 +15,12 @@
 - [Prerequisites](#-prerequisites)
 - [Quick Setup (Alwaysdata)](#-quick-setup-alwaysdata)
 - [🚀 Start Forwarding — Telegram Setup](#-start-forwarding--telegram-setup)
+- [✂️ Customization Examples](#-customization-examples)
 - [Local Setup](#-local-setup)
 - [All Commands](#-all-commands)
 - [Project Structure](#-project-structure)
 - [How It Works](#-how-it-works)
+- [🧹 24h Auto-Cleanup](#-24h-auto-cleanup)
 - [Troubleshooting](#-troubleshooting)
 - [Updating](#-updating)
 
@@ -327,6 +329,100 @@ Check stats anytime:
 
 ---
 
+## ✂️ Customization Examples
+
+> **The customization commands are the most powerful feature** — they let you transform raw source posts into your branded, monetizable content. Below is a real-world walkthrough with everything you need.
+
+### Example Source Post (Raw)
+
+```
+Nilkamal 4 Tier Engineered WoodBook Shelf Cabinet @₹4250.
+
+https://www.amazon.in/dp/B0F3CVFBQ2?th=1&tag=indamz01-21
+
+@b-tricks join
+```
+
+Notice the issues with this raw post:
+- `@₹4250` — `@` typo before rupee sign
+- `WoodBook` — typo, should be `Wood Book`
+- `indamz01-21` — source's affiliate tag (replace with YOURS to earn commission)
+- `@b-tricks join` — source channel's CTA (replace with YOUR channel)
+
+### Step-by-Step Transformation
+
+| # | Telegram Command | Effect |
+|---|------------------|--------|
+| 1 | `/add_replace @₹→₹` | `@₹4250` → `₹4250` |
+| 2 | `/add_replace 4250→4,250` | `₹4250` → `₹4,250` (Indian-style comma) |
+| 3 | `/add_replace WoodBook→Wood Book` | Fix typo |
+| 4 | `/add_replace indamz01-21 → yourtag-21` | Replace affiliate tag (earn YOUR commission!) |
+| 5 | `/add_replace @b-tricks→@YourDealsChannel` | Replace source CTA with your channel |
+| 6 | `/add_block Sponsored` | Skip posts containing "Sponsored" |
+| 7 | `/add_block #ad` | Skip `#ad` tagged posts |
+| 8 | `/add_block giveaway` | Skip giveaway posts |
+| 9 | `/set_header 🔥 BEST DEALS TODAY 🔥` | Prepend to every post |
+| 10 | `/set_footer 👉 Join @YourDealsChannel!` | Append to every post |
+
+### Final Customized Post
+
+After all rules are applied, this is what your destination bot receives:
+
+```
+🔥 BEST DEALS TODAY 🔥
+
+Nilkamal 4 Tier Engineered Wood Book Shelf Cabinet ₹4,250.
+
+https://www.amazon.in/dp/B0F3CVFBQ2?th=1&tag=yourtag-21
+
+@YourDealsChannel join
+
+👉 Join @YourDealsChannel!
+```
+
+### Post Processing Pipeline
+
+When a new post arrives from any source channel, bot does this in order:
+
+```
+1. BLOCK CHECK  ─── matched? → SKIP ❌ (counted as Skipped in /stats)
+2. WORD REPLACE ─── replace all matching words (literal text replacement)
+3. ADD HEADER  ─── prepend header text (line 1)
+4. ADD FOOTER  ─── append footer text (last line)
+5. FORWARD ✅    ─── to destination bot (@CueLinksBot or whatever you set)
+```
+
+### Pro Tips
+
+- **Both formats work**: `/add_replace @₹→₹` (with arrow) OR `/add_replace @₹ ₹` (space-separated)
+- **Case matters for replacement**: `@₹` will NOT match `@₹` if you typed them differently — make rules for each variant
+- **Affiliate tag = monetization**: Always replace source's `?tag=indamz01-21` with your own tag to earn commission
+- **Common starting replaces**: `@₹→₹`, `@Rs.→Rs.`, common typos, original affiliate tag → your tag
+- **Block rules are case-insensitive**: `Sponsored`, `SPONSORED`, and `sponsored` all match
+- **Header/Footer stay short** (1-2 lines) — Telegram charges lines against message length
+
+### Recommended Setup For Deal Channels
+
+```
+/add_replace @₹→₹
+/add_replace indamz01-21 → yourtag-21
+/add_replace @b-tricks→@YourDealsChannel
+/add_replace WoodBook→Wood Book
+
+/add_block Sponsored
+/add_block #ad
+/add_block giveaway
+
+/set_header 🔥 DEAL ALERT 🔥
+/set_footer 👉 Join @YourDealsChannel for daily loot!
+
+/list_replaces
+/list_blocks
+/status
+```
+
+---
+
 ## 💻 Local Setup
 
 ```bash
@@ -480,6 +576,103 @@ For free Alwaysdata hosting, the bot includes:
 | `catch_up=False` | Skips replay of missed messages |
 | Auto-restart | Exits cleanly every 6h → service manager restarts |
 | Config reload | 120s interval (vs 30s) to reduce DB load |
+
+---
+
+## 🧹 24h Auto-Cleanup
+
+The bot self-cleans on a 24-hour schedule to keep disk usage low and
+prevent unbounded growth of history tables. Cleanup runs **automatically**
+— no action required from you.
+
+### What Gets Cleaned Every 24h
+
+| Target | Action | Default Retention |
+|--------|--------|-------------------|
+| `forward_history` rows older than 30 days | DELETE + VACUUM | `HISTORY_RETENTION_DAYS=30` |
+| `__pycache__/` directories | Remove with `shutil.rmtree` | Always |
+| Stray `*.pyc` files | Remove with `os.unlink` | Always |
+| Orphaned log files in `logs/` | Remove if older than 7 days | `LOG_RETENTION_DAYS=7` |
+| Temp files (*.tmp, *~, .DS_Store, *.bak, *.swp) | Remove from project | Always |
+
+Each cleanup stage runs in a separate try/except block, so a single failure
+won't stop the others — errors are logged per-stage and one bad stage
+does NOT abort the rest.
+
+### Safety Guarantees
+
+A hard-coded exclusion list **prohibits deletion of**:
+
+- `bot_data.db` and SQLite WAL/SHM files
+- `userbot_session.session` and Telethon session journal
+- `config.json`, `.env`, `.env.example`
+- The active `bot.log` and its `RotatingFileHandler` backups
+- `venv/`, `.venv/`, `.git/`, `site-packages/` directories
+
+Even if a cleanup pass runs concurrently with bot operation, none of these
+critical files can ever be deleted by accident. Each path is checked
+against `PROTECTED_FILE_NAMES` / `PROTECTED_DIR_NAMES` before deletion.
+
+### How Often It Actually Runs
+
+The bot has built-in `RESTART_HOURS = 6` auto-restart (every 6 hours, to
+clear memory leaks). On every restart, **synchronous startup cleanup runs
+BEFORE the asyncio loop starts** — so you get cleanup runs:
+
+- **Every 6 hours** (via auto-restart + startup cleanup), OR
+- **Every 24 hours** (via the asyncio-scheduled task if `NO_RESTART=1`)
+
+Either way: at least once per day. Backup of safety.
+
+### Verify Cleanup Is Working
+
+SSH into your server and run:
+
+```bash
+cd ~/www/bot
+grep -E "(Startup cleanup|Auto-cleanup)" logs/bot.log | tail -20
+```
+
+You should see lines like:
+
+```
+INFO  telegram_bot  Startup cleanup: pycache=2d/0f
+INFO  telegram_bot  Auto-cleanup: history=8, vacuumed, pycache=3d/2f
+INFO  telegram_bot  Auto-cleanup: (nothing to clean)
+```
+
+If a line contains `errors=[...]`, paste it back to the developer — the
+bot logs error details per-stage and continues with other stages.
+
+### Force an Immediate Cleanup
+
+```bash
+cd ~/www/bot
+source venv/bin/activate
+python3 -c "from utils.cleanup import CleanupScheduler; from database.db import Database; db=Database(); r=CleanupScheduler(db).run_full_cleanup(); print(r.summary()); print('errors:', r.errors)"
+```
+
+Output:
+
+```
+pycache=2d/0f
+errors: []
+```
+
+### Configuration (Env Vars — Optional)
+
+Set these on your Alwaysdata Service's Environment field
+(Admin Panel → Services → Edit → Environment, one per line):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HISTORY_RETENTION_DAYS` | `30` | How long to keep forward history |
+| `LOG_RETENTION_DAYS` | `7` | How long to keep orphan log files |
+| `CLEANUP_INTERVAL_HOURS` | `24` | Interval between scheduled cleanups |
+| `NO_CLEANUP` | (unset) | Set `=1` to disable all cleanup |
+| `LOW_RAM` | `true` | Already set — controls log verbosity |
+
+Save the service → Restart. New values take effect on next startup.
 
 ---
 
