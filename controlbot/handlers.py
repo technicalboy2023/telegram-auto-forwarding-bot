@@ -360,15 +360,18 @@ async def set_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/set_dest @BotUsername`\n\nExample: `/set_dest @CueLinksBot`",
+            "❌ Usage: <code>/set_dest @BotUsername</code>\n\n"
+            "Example: <code>/set_dest @CueLinksBot</code>",
+            parse_mode="HTML",
         )
         return
 
     username = args[0].lstrip("@").strip()
     db.set_destination(username)
     await update.message.reply_text(
-        f"🎯 Destination bot set to `@{username}`\\!\nAll forwarded posts will be sent here\\.",
-        parse_mode="MarkdownV2",
+        f"🎯 Destination bot set to <code>@{_escape_html(username)}</code>!\n"
+        "All forwarded posts will be sent here.",
+        parse_mode="HTML",
     )
 
 
@@ -380,9 +383,16 @@ async def show_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     dest = db.get_destination()
     if dest:
-        await update.message.reply_text(f"🎯 Current destination: `@{dest}`")
+        await update.message.reply_text(
+            f"🎯 Current destination: <code>@{_escape_html(dest)}</code>",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text("⚠️ No destination bot set.\nUse `/set_dest @BotUsername` to configure.")
+        await update.message.reply_text(
+            "⚠️ No destination bot set.\n"
+            "Use <code>/set_dest @BotUsername</code> to configure.",
+            parse_mode="HTML",
+        )
 
 
 # ────────────────────────────────────────────────────────────
@@ -766,40 +776,46 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _admin_only(update):
         return
 
-    await update.message.reply_text(
-        "🤖 *Telegram Auto\\-Forwarding Bot — Admin Panel*\n\n"
-        "Welcome\\! Manage your forwarding setup with these commands:\n\n"
-        "📡 *Sources:*\n"
-        "  `/add_source @channel` — Add source\n"
-        "  `/remove_source @channel` — Remove source\n"
-        "  `/list_sources` — View all sources\n\n"
-        "🎯 *Destination:*\n"
-        "  `/set_dest @bot` — Set destination bot\n"
-        "  `/show_dest` — View current destination\n\n"
-        "✂️ *Customization:*\n"
-        "  `/add_replace Old➜New` — Add word replacement\n"
-        "  `/remove_replace Old` — Remove replacement\n"
-        "  `/list_replaces` — View all replacements\n"
-        "  `/add_block Word` — Block posts with this word\n"
-        "  `/remove_block Word` — Remove block rule\n"
-        "  `/list_blocks` — View all block rules\n"
-        "  `/set_header Text` — Add header\n"
-        "  `/set_footer Text` — Add footer\n"
-        "  `/clear_header` — Remove header\n"
-        "  `/clear_footer` — Remove footer\n\n"
-        "🎯 *Multi-Destination:*\n"
-        "  `/add_dest @channel @bot` — Add another destination bot\n"
-        "  `/remove_dest @channel @bot` — Remove destination bot\n"
-        "  `/list_dests @channel` — View all destinations of a source\n"
-        "  `/set_source_dest @channel @bot` — Set/change single destination\n\n"
-        "⚙️ *Control:*\n"
-        "  `/status` — Current status\n"
-        "  `/pause` — Pause forwarding\n"
-        "  `/resume` — Resume forwarding\n"
-        "  `/stats` — Statistics\n"
-        "  `/set_delay 5` — Set delay between forwards " r"\(seconds\)" "\n",
-        parse_mode="MarkdownV2",
-    )
+    lines = [
+        "🤖 <b>Telegram Auto-Forwarding Bot — Admin Panel</b>",
+        "",
+        "Welcome! Manage your forwarding setup with these commands:",
+        "",
+        "📡 <b>Sources:</b>",
+        "  <code>/add_source @channel</code> — Add source",
+        "  <code>/remove_source @channel</code> — Remove source",
+        "  <code>/list_sources</code> — View all sources",
+        "",
+        "🎯 <b>Destination:</b>",
+        "  <code>/set_dest @bot</code> — Set global destination bot",
+        "  <code>/show_dest</code> — View current global destination",
+        "",
+        "📡 <b>Per-Source Mapping:</b>",
+        "  <code>/set_source_dest @channel @bot</code> — Set exclusive dest",
+        "  <code>/add_dest @channel @bot</code> — Add extra dest",
+        "  <code>/remove_dest @channel @bot</code> — Remove dest",
+        "  <code>/list_dests @channel</code> — View all dests for a source",
+        "",
+        "✂️ <b>Customization:</b>",
+        "  <code>/add_replace Old➜New</code> — Add word replacement",
+        "  <code>/remove_replace Old</code> — Remove replacement",
+        "  <code>/list_replaces</code> — View all replacements",
+        "  <code>/add_block Word</code> — Block posts with this word",
+        "  <code>/remove_block Word</code> — Remove block rule",
+        "  <code>/list_blocks</code> — View all block rules",
+        "  <code>/set_header Text</code> — Add header",
+        "  <code>/set_footer Text</code> — Add footer",
+        "  <code>/clear_header</code> — Remove header",
+        "  <code>/clear_footer</code> — Remove footer",
+        "",
+        "⚙️ <b>Control:</b>",
+        "  <code>/status</code> — Current status",
+        "  <code>/pause</code> — Pause forwarding",
+        "  <code>/resume</code> — Resume forwarding",
+        "  <code>/stats</code> — Statistics",
+        "  <code>/set_delay 5</code> — Set delay between forwards (seconds)",
+    ]
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────

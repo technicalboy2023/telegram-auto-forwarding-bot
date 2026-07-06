@@ -197,24 +197,49 @@ class Database:
         the per-source mapping — the source will then fall back to the
         global /set_dest bot.
 
+        ALSO syncs the source_destinations table so the engine's multi-dest
+        lookup sees this change. Any existing multi-dest entries are replaced
+        with just this single destination (or cleared if destination is None).
+
         Returns True if the source was found and updated.
         """
         username = username.lstrip("@").strip()
         dest_clean = destination.lstrip("@").strip() if destination else None
         with self._lock:
+            # Update the destination column (backward compat + single-dest fallback)
             cur = self.conn.execute(
                 "UPDATE source_channels SET destination = ? WHERE username = ?",
                 (dest_clean, username),
             )
-            self.conn.commit()
-            updated = cur.rowcount > 0
-            if updated:
-                logger.info(
-                    "Source @%s destination set%s",
-                    username,
-                    f" -> @{dest_clean}" if dest_clean else " -> DEFAULT",
+            if cur.rowcount == 0:
+                return False
+
+            # Sync source_destinations table so multi-dest engine sees this change.
+            # 1. Find source_id
+            row = self.conn.execute(
+                "SELECT id FROM source_channels WHERE username = ?", (username,)
+            ).fetchone()
+            if row is not None:
+                source_id = row["id"]
+                # 2. Clear ALL existing multi-dest entries
+                self.conn.execute(
+                    "DELETE FROM source_destinations WHERE source_id = ?",
+                    (source_id,),
                 )
-            return updated
+                # 3. Add the new destination (if any) as the sole entry
+                if dest_clean:
+                    self.conn.execute(
+                        "INSERT INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
+                        (source_id, dest_clean),
+                    )
+
+            self.conn.commit()
+            logger.info(
+                "Source @%s destination set%s (synced multi-dest)",
+                username,
+                f" -> @{dest_clean}" if dest_clean else " -> DEFAULT",
+            )
+            return True
 
     def update_source_channel_id(self, username: str, channel_id: int) -> bool:
         """Persist the resolved Telegram channel_id back to the DB so we can

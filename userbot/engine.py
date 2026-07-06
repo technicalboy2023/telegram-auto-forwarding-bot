@@ -284,6 +284,7 @@ class UserbotEngine:
         processed_caption: Optional[str],
     ) -> None:
         """Send a single message/media to the destination entity."""
+        TELEGRAM_TIMEOUT = 30  # seconds — prevents bot freeze on slow API
         media = original_message.media
 
         if media and isinstance(media, MessageMediaPhoto):
@@ -291,16 +292,22 @@ class UserbotEngine:
                 dest_entity,
                 media.photo,
                 caption=processed_caption or "",
+                timeout=TELEGRAM_TIMEOUT,
             )
         elif media and isinstance(media, MessageMediaDocument):
             await self.client.send_file(
                 dest_entity,
                 media.document,
                 caption=processed_caption or "",
+                timeout=TELEGRAM_TIMEOUT,
             )
         else:
             if processed_caption:
-                await self.client.send_message(dest_entity, processed_caption)
+                await self.client.send_message(
+                    dest_entity,
+                    processed_caption,
+                    timeout=TELEGRAM_TIMEOUT,
+                )
 
     async def _forward_message(
         self,
@@ -357,8 +364,17 @@ class UserbotEngine:
                         pass
 
         except FloodWaitError as e:
-            logger.warning("Flood wait: %d seconds. Waiting...", e.seconds)
-            await asyncio.sleep(e.seconds)
+            max_wait = min(e.seconds, 60)  # cap flood wait at 60s
+            logger.warning(
+                "Flood wait: %ds. Waiting %ds (capped)...",
+                e.seconds, max_wait,
+            )
+            await asyncio.sleep(max_wait)
+            if e.seconds > 60:
+                logger.warning(
+                    "Flood wait >60s — retrying after 60s. "
+                    "If repeated, reduce forward delay."
+                )
             # Retry once after waiting
             try:
                 delay = self.db.get_forward_delay()
