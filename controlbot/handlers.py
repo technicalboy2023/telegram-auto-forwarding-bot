@@ -396,15 +396,19 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     pause_text = "⏸️ PAUSED" if stats["paused"] else "▶️ RUNNING"
 
+    # Build using HTML so the dynamic fields (counts, delay, destination) never
+    # break the parser. The whole message is also editable by handle_callback
+    # using the same HTML parse mode safely.
+    safe_dest = _escape_html(dest) if dest else _escape_html("NOT SET")
     lines = [
-        f"🤖 *Bot Status: {pause_text}*",
+        f"🤖 <b>Bot Status: {pause_text}</b>",
         "",
-        f"📡 Sources: `{stats['source_count']}`",
-        f"🎯 Destination: `@{dest or 'NOT SET'}`",
-        f"⏱️ Forward Delay: `{stats['forward_delay']}s`",
+        f"📡 Sources: <code>{stats['source_count']}</code>",
+        f"🎯 Destination: <code>@{safe_dest}</code>",
+        f"⏱️ Forward Delay: <code>{stats['forward_delay']}s</code>",
         "",
-        f"✅ Forwarded: `{stats['total_forwarded']}`",
-        f"⛔ Skipped: `{stats['total_skipped']}`",
+        f"✅ Forwarded: <code>{stats['total_forwarded']}</code>",
+        f"⛔ Skipped: <code>{stats['total_skipped']}</code>",
         f"📌 Header: {'Set' if header else 'Not set'}",
         f"📌 Footer: {'Set' if footer else 'Not set'}",
     ]
@@ -417,7 +421,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ])
 
     await update.message.reply_text(
-        "\n".join(lines), parse_mode="MarkdownV2", reply_markup=keyboard,
+        "\n".join(lines), parse_mode="HTML", reply_markup=keyboard,
     )
 
 
@@ -510,19 +514,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data == "pause":
         db.set_paused(True)
+        # Toggle the keyboard so the only remaining button is "Resume".
+        # This avoids editing the message text (which would lose HTML
+        # formatting when re-sent as plain text) and avoids any
+        # MarkdownV2 escape-parsing failures on rendered dots like "5.0s".
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("▶️ Resume", callback_data="resume")]
+        ])
+        await query.edit_message_reply_markup(reply_markup=keyboard)
+        # Send a separate short confirmation (plain text, no parse_mode risks).
         await query.answer("Forwarding paused.")
-        await query.edit_message_text(
-            query.message.text.replace("▶️ RUNNING", "⏸️ PAUSED"),
-            reply_markup=query.message.reply_markup,
-            parse_mode="MarkdownV2",
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="⏸️ Forwarding PAUSED. Use /resume or the button below to resume.",
         )
     elif data == "resume":
         db.set_paused(False)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏸️ Pause", callback_data="pause")]
+        ])
+        await query.edit_message_reply_markup(reply_markup=keyboard)
         await query.answer("Forwarding resumed.")
-        await query.edit_message_text(
-            query.message.text.replace("⏸️ PAUSED", "▶️ RUNNING"),
-            reply_markup=query.message.reply_markup,
-            parse_mode="MarkdownV2",
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="▶️ Forwarding RESUMED.",
         )
 
 

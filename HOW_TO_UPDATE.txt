@@ -1,0 +1,146 @@
+================================================================================
+   🔄 HOW TO UPDATE YOUR BOT FROM GITHUB (Alwaysdata SSH)
+   📍 Location: amna@ssh1.alwaysdata.net  →  ~/www/bot/
+================================================================================
+
+
+════════════════════════════════════════════════════════════════════
+STEP 0 — SSH LOGIN
+════════════════════════════════════════════════════════════════════
+
+Open terminal, paste:
+
+  ssh amna@ssh1.alwaysdata.net
+
+Type your password when asked (characters won't show — that's normal).
+You'll see a prompt like: amna@ssh1:~$
+
+
+════════════════════════════════════════════════════════════════════
+STEP 1 — GO TO BOT FOLDER
+════════════════════════════════════════════════════════════════════
+
+  cd ~/www/bot
+
+
+════════════════════════════════════════════════════════════════════
+STEP 2 — STOP THE RUNNING BOT (release old code lock)
+════════════════════════════════════════════════════════════════════
+
+  pkill -9 -f bot.py
+
+  sleep 2
+
+  ps aux | grep bot.py
+
+→ You should see NO bot.py process. Only your "grep bot.py" line.
+  If bot.py is still showing, run `pkill -9 -f bot.py` once more.
+
+
+════════════════════════════════════════════════════════════════════
+STEP 3 — PULL LATEST CODE FROM GITHUB
+════════════════════════════════════════════════════════════════════
+
+  git pull origin main
+
+✅ Expected output:
+   remote: Enumerating objects: X, done.
+   ...
+   Updating <old-hash>..<new-hash>
+   Fast-forward
+    SOMETHING | lines changed...
+
+
+════════════════════════════════════════════════════════════════════
+STEP 4 — RESTART BOT VIA ADMIN PANEL (browser)
+════════════════════════════════════════════════════════════════════
+
+1. Open browser → https://admin.alwaysdata.com/
+2. Login
+3. Left menu → Advanced → Services
+4. Click "telegram-forwarder"
+5. Click ▶️ Start (or Restart) button
+
+✅ Alwaysdata will run: /home/amna/www/bot/venv/bin/python3 /home/amna/www/bot/bot.py
+
+
+════════════════════════════════════════════════════════════════════
+STEP 5 — VERIFY BOT IS RUNNING (optional but recommended)
+════════════════════════════════════════════════════════════════════
+
+Check logs:
+  tail -30 ~/www/bot/logs/bot.log
+
+→ You should see:
+   "Telegram Auto-Forwarding Bot starting..."
+   "Userbot logged in as @..."
+   "Control Bot is ready — listening for commands."
+
+Test on Telegram: send /status to your control bot
+→ Should reply with status showing 0 error.
+
+
+════════════════════════════════════════════════════════════════════
+🆘 IF SOMETHING GOES WRONG
+════════════════════════════════════════════════════════════════════
+
+PROBLEM: "Merge conflict" during git pull
+FIX: Discard ANY local edits you made (we don't edit server-side):
+     cd ~/www/bot
+     git fetch origin
+     git reset --hard origin/main
+
+PROBLEM: Bot not starting after restart
+FIX: Check logs in real-time:
+     tail -f ~/www/bot/logs/bot.log
+     (Ctrl+C to exit)
+
+PROBLEM: "Permission denied" on git pull
+FIX:
+     cd ~/www/bot
+     git config --global --add safe.directory /home/amna/www/bot
+
+PROBLEM: Service keeps failing
+FIX: Open Admin Panel → Logs (top right) to see why.
+
+
+════════════════════════════════════════════════════════════════════
+⚡ ONE-LINER (combine everything)
+════════════════════════════════════════════════════════════════════
+
+If you're brave AND confident nothing will go wrong:
+
+  cd ~/www/bot && pkill -9 -f bot.py && sleep 2 && git pull origin main
+
+Then go to Admin Panel → Services → Start button.
+
+════════════════════════════════════════════════════════════════════
+📌 IMPORTANT RULES
+════════════════════════════════════════════════════════════════════
+
+✓ config.json is gitignored — NEVER delete it
+✓ userbot_session.session is gitignored — NEVER delete it
+✓ bot_data.db is gitignored — YOUR DATA is safe
+✓ Alwaysdata auto-restarts bot if it crashes (via service manager)
+✓ Bot has internal auto-restart every 6 hours (clean RAM)
+✓ After pulling, RESTART via Admin Panel (not via SSH python3!)
+
+
+════════════════════════════════════════════════════════════════════
+🆕 FIRST-TIME INSTALL (if server is wiped)
+════════════════════════════════════════════════════════════════════
+
+  cd ~/www
+  git clone https://github.com/technicalboy2023/telegram-auto-forwarding-bot.git bot
+  cd ~/www/bot
+  python3 -m venv venv
+  source venv/bin/activate
+  pip install --upgrade pip
+  pip install telethon python-telegram-bot
+
+Then create config.json, run python3 bot.py for OTP, then create
+service in Admin Panel (see SETUP_COMMANDS.txt).
+
+================================================================================
+   ✅ DONE — Bot updated and restarted. Send /status in Telegram to confirm.
+================================================================================
