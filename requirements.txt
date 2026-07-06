@@ -1,0 +1,5 @@
+# Core dependencies
+Telethon>=1.36.0,<2.0.0
+python-telegram-bot>=21.0,<22.0
+
+# No additional deps needed — sqlite3, asyncio, logging, json, re, os are all built-in

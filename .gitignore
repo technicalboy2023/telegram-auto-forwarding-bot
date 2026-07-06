@@ -1,0 +1,36 @@
+# Sensitive config — DO NOT COMMIT
+config.json
+.env
+
+# Database (contains user data)
+bot_data.db
+
+# Telethon session (personal login)
+*.session
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deploy scripts (local use only)
+deploy/
