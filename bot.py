@@ -110,7 +110,8 @@ def main():
 
     # Auto-restart interval in seconds (set to 0 to disable)
     RESTART_HOURS = 6  # Restart every 6 hours to clear memory leaks
-    if os.environ.get("NO_RESTART"):
+    _no_restart = os.environ.get("NO_RESTART", "").strip().lower()
+    if _no_restart not in ("", "0", "false", "no"):
         RESTART_HOURS = 0
 
     async def run_all():

@@ -49,6 +49,7 @@ from controlbot.handlers import (
     handle_callback,
     set_delay,
     _get_admin_id,
+    _escape_html,
 )
 from database.db import Database
 
@@ -146,11 +147,11 @@ async def _on_ptb_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
-                    "⚠️ *Internal Error*\n\n"
-                    f"Something went wrong: `{type(context.error).__name__}`\n"
-                    "Check `/logs` on the server for full traceback."
+                    "⚠️ <b>Internal Error</b>\n\n"
+                    f"Something went wrong: <code>{_escape_html(type(context.error).__name__)}</code>\n"
+                    "Check logs on the server for full traceback."
                 ),
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
     except Exception:
         # Last-resort guard — don't let the error handler itself crash the poll loop

@@ -234,7 +234,11 @@ class UserbotEngine:
         # Duplicate check (skip for empty text — media without caption
         # already has no text to dedup against)
         if raw_text and self.db.is_duplicate(source_db_id, raw_text):
-            logger.debug("Duplicate post skipped (src=%s, msg=%d)", source_username, message.id)
+            logger.debug(
+                "Duplicate post skipped (src=%s, msg=%d)",
+                matched_username or source_username or "?",
+                message.id,
+            )
             return
 
         # Process through customizer
