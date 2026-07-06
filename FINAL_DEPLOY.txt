@@ -1,0 +1,189 @@
+═══════════════════════════════════════════════════════════════════════════
+  FINAL DEPLOY — ALWAYSDATA STEPS (after 24h auto-cleanup push)
+═══════════════════════════════════════════════════════════════════════════
+
+Your bot already has all features. This txt file gives the EXACT commands
+to update Alwaysdata and turn on the new 24-hour auto-cleanup.
+
+───────────────────────────────────────────────────────────────────
+ STEP 1 — SSH: PULL LATEST CODE FROM GITHUB
+───────────────────────────────────────────────────────────────────
+
+Open terminal. SSH into your Alwaysdata server:
+
+    ssh amna@ssh1.alwaysdata.net
+
+(password: copy from your password manager — do NOT paste it here)
+
+Go to the bot folder and update:
+
+    cd ~/www/bot
+    pkill -9 -f bot.py
+    sleep 2
+    git pull origin main
+
+You should see something like:
+
+    Updating <old-sha>..<new-sha>
+    Fast-forward
+     bot.py                  | 18 +++++++++++++++++-
+     database/db.py          | 26 ++++++++++++++++++++++++++
+     utils/cleanup.py        | 261 ++++++++++++++++++++++++
+     3 files changed, 304 insertions(+), 1 deletion(-)
+     create mode 100644 utils/cleanup.py
+
+If you see "Already up to date" — that means GitHub and server are
+already in sync, skip to Step 2.
+
+Verify the new file is there:
+
+    ls -la utils/cleanup.py
+
+Should show ~270 lines.
+
+───────────────────────────────────────────────────────────────────
+ STEP 2 — BROWSER: RESTART THE ALWAYSDATA SERVICE
+───────────────────────────────────────────────────────────────────
+
+Open browser → https://admin.alwaysdata.com/
+
+Login (tiwariaman4899@gmail.com).
+
+Left sidebar → Advanced → Services.
+
+You'll see your service named "telegram-forwarder" (or whatever you
+called it). Click the ▶️ "Start" play button on its row.
+
+Wait ~5 seconds. The status dot should turn green.
+
+(If it's already running, click the 🔄 Restart icon instead.)
+
+───────────────────────────────────────────────────────────────────
+ STEP 3 — SSH: VERIFY CLEANUP RAN ON STARTUP
+───────────────────────────────────────────────────────────────────
+
+Back in your SSH terminal:
+
+    cd ~/www/bot
+    tail -30 logs/bot.log
+
+Look for these new log lines near the top:
+
+    INFO  telegram_bot  Database ready.
+    INFO  telegram_bot  Startup cleanup: (nothing to clean)
+
+First run on a fresh DB prints "(nothing to clean)" — that is GOOD.
+Means the scheduler started cleanly.
+
+You should also see (one of these patterns):
+
+    INFO  telegram_bot  Auto-cleanup scheduler running every 24 hour(s)
+                         (history=30d, logs=7d).
+
+If you see error lines like "Cleanup failed" — paste them back to me.
+
+───────────────────────────────────────────────────────────────────
+ STEP 4 — TELEGRAM: VERIFY EVERYTHING STILL WORKS
+───────────────────────────────────────────────────────────────────
+
+Open Telegram → talk to your control bot.
+
+Send:
+
+    /status
+
+You should get a normal Status reply (RUNNING, source count, delay, etc).
+The new cleanup feature does NOT change any user-facing commands — it's
+pure background maintenance.
+
+Send:
+
+    /help
+
+Should print the full admin panel again. (No new commands yet.)
+
+───────────────────────────────────────────────────────────────────
+ STEP 5 — OPTIONAL: FORCE AN IMMEDIATE CLEANUP TO TEST
+───────────────────────────────────────────────────────────────────
+
+Want to see the cleanup actually do something? Run it manually:
+
+    cd ~/www/bot
+    source venv/bin/activate
+    python3 -c "from utils.cleanup import CleanupScheduler; from database.db import Database; db=Database(); r=CleanupScheduler(db).run_full_cleanup(); print(r.summary()); print('errors:', r.errors)"
+
+This will print something like:
+
+    history=12, vacuumed, pycache=3d/5f
+
+(Exact counts depend on your DB state. Even "(nothing to clean)" is fine.)
+
+Then exit venv when done:
+
+    deactivate
+
+───────────────────────────────────────────────────────────────────
+ STEP 6 — SCHEDULED CLEANUP WILL RUN AUTOMATICALLY FROM HERE
+───────────────────────────────────────────────────────────────────
+
+Every 24 hours the bot will quietly:
+  · Prune forward_history rows older than 30 days
+  · VACUUM the database
+  · Clear __pycache__ directories
+  · Remove orphan log files older than 7 days
+  · Delete stray .tmp / .bak / *~ / .DS_Store files
+
+You will see lines like this in logs/bot.log every day:
+
+    INFO  telegram_bot  Auto-cleanup: history=8, vacuumed, pycache=2d
+
+No action needed from you — it's automatic.
+
+───────────────────────────────────────────────────────────────────
+ STEP 7 — IF SOMETHING BREAKS: KILL & RESTART
+───────────────────────────────────────────────────────────────────
+
+If the bot stops responding:
+
+    ssh amna@ssh1.alwaysdata.net
+    cd ~/www/bot
+    pkill -9 -f bot.py
+    sleep 3
+
+Then in browser → admin.alwaysdata.com → Services → click ▶️ Start.
+
+───────────────────────────────────────────────────────────────────
+ DONE — You're 100% live with 24h auto-cleanup! 🎉
+───────────────────────────────────────────────────────────────────
+
+Quick summary of alwaysdata side effects:
+  · No new SSH work needed after Step 1
+  · No new browser work needed after Step 2
+  · No new Telegram commands needed
+  · Cleanup runs every 24 hours silently
+  · All your existing setup (sources, dest, rules) is untouched
+
+───────────────────────────────────────────────────────────────────
+ CONFIGURATION (env vars — only set if you want different values)
+───────────────────────────────────────────────────────────────────
+
+Defaults are good for most users. But if your DB grows fast or logs
+pile up, you can override by editing the Service Environment field in
+the Admin Panel (LOW_RAM=true; line).
+
+Available tunables:
+
+    HISTORY_RETENTION_DAYS=30       # default
+    LOG_RETENTION_DAYS=7            # default
+    CLEANUP_INTERVAL_HOURS=24       # default
+    LOW_RAM=true                    # already set
+    NO_CLEANUP=1                    # add this to disable cleanup entirely
+
+To change a value: Admin Panel → Services → Edit your service →
+Environment field. Add e.g. "CLEANUP_INTERVAL_HOURS=12" on a new line.
+
+Save → Restart service. New value takes effect immediately.
+
+═══════════════════════════════════════════════════════════════════════════
+  END OF FINAL_DEPLOY.txt
+═══════════════════════════════════════════════════════════════════════════

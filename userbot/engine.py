@@ -209,12 +209,17 @@ class UserbotEngine:
             message.id,
         )
 
-        # Get source DB id
+        # Get source DB id AND its exclusive destination (if any).
+        # Each source can have its own dedicated destination bot (per-source
+        # mapping) so posts from @technicalgeardeals can go ONLY to
+        # @cuelinks_bot while @btrickdeals posts go ONLY to @sankmo_bot.
         sources = self.db.get_all_sources()
         source_db_id = None
+        source_dest = None
         for s in sources:
             if s["username"].lower() == matched_username.lower():
                 source_db_id = s["id"]
+                source_dest = s.get("destination")
                 break
 
         if source_db_id is None:
@@ -240,10 +245,15 @@ class UserbotEngine:
             logger.info("Post skipped (blocked) from @%s", source_username)
             return
 
-        # Get destination
-        dest_username = self.db.get_destination()
+        # Get destination: per-source EXCLUSIVE mapping overrides global default.
+        # Fallback chain: per-source destination (if set) → global /set_dest bot.
+        dest_username = source_dest or self.db.get_destination()
         if not dest_username:
-            logger.warning("No destination bot set — post not forwarded")
+            logger.warning(
+                "No destination bot set for @%s — post not forwarded. "
+                "Set one with /set_dest @Bot or /set_source_dest @%s @Bot",
+                source_username, source_username,
+            )
             return
 
         # Forward with rate limiting

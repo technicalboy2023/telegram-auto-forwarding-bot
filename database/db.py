@@ -54,6 +54,7 @@ class Database:
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     username    TEXT    NOT NULL UNIQUE,
                     channel_id  INTEGER,
+                    destination TEXT    DEFAULT NULL,  -- NULL = use global /set_dest
                     added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
 
@@ -116,6 +117,16 @@ class Database:
                 self.conn.commit()
                 logger.info("Migrated replace_rules: UNIQUE constraint on old_word applied.")
 
+            # -- Migration: add per-source destination column (for multi-bot forwarding)
+            cur = self.conn.execute("PRAGMA table_info(source_channels)")
+            columns = [row["name"] for row in cur.fetchall()]
+            if "destination" not in columns:
+                self.conn.execute(
+                    "ALTER TABLE source_channels ADD COLUMN destination TEXT DEFAULT NULL"
+                )
+                self.conn.commit()
+                logger.info("Migrated source_channels: added destination column.")
+
     def _set_defaults(self) -> None:
         """Ensure default settings rows exist."""
         defaults = {
@@ -138,20 +149,63 @@ class Database:
     #  Source Channels
     # ──────────────────────────────────────────────
 
-    def add_source(self, username: str, channel_id: Optional[int] = None) -> bool:
-        """Add a source channel. Returns True if added, False if already exists."""
+    def add_source(
+        self,
+        username: str,
+        channel_id: Optional[int] = None,
+        dest: Optional[str] = None,
+    ) -> bool:
+        """Add a source channel. Returns True if added, False if already exists.
+
+        Args:
+            username: Channel username (without @).
+            channel_id: Optional resolved channel_id for private channels.
+            dest: Optional EXCLUSIVE destination bot username (without @).
+                  If set, ALL posts from this source will forward ONLY to this
+                  bot. If None, posts fall back to the global /set_dest bot.
+        """
         username = username.lstrip("@").strip()
+        dest_clean = dest.lstrip("@").strip() if dest else None
         with self._lock:
             try:
                 self.conn.execute(
-                    "INSERT INTO source_channels (username, channel_id) VALUES (?, ?)",
-                    (username, channel_id),
+                    "INSERT INTO source_channels (username, channel_id, destination) VALUES (?, ?, ?)",
+                    (username, channel_id, dest_clean),
                 )
                 self.conn.commit()
-                logger.info("Source added: @%s", username)
+                suffix = f" -> @{dest_clean}" if dest_clean else ""
+                logger.info("Source added: @%s%s", username, suffix)
                 return True
             except sqlite3.IntegrityError:
                 return False
+
+    def set_source_destination(
+        self, username: str, destination: Optional[str]
+    ) -> bool:
+        """Set or clear the EXCLUSIVE destination for a source channel.
+
+        Pass destination=None (or 'default' handled at handler layer) to clear
+        the per-source mapping — the source will then fall back to the
+        global /set_dest bot.
+
+        Returns True if the source was found and updated.
+        """
+        username = username.lstrip("@").strip()
+        dest_clean = destination.lstrip("@").strip() if destination else None
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE source_channels SET destination = ? WHERE username = ?",
+                (dest_clean, username),
+            )
+            self.conn.commit()
+            updated = cur.rowcount > 0
+            if updated:
+                logger.info(
+                    "Source @%s destination set%s",
+                    username,
+                    f" -> @{dest_clean}" if dest_clean else " -> DEFAULT",
+                )
+            return updated
 
     def update_source_channel_id(self, username: str, channel_id: int) -> bool:
         """Persist the resolved Telegram channel_id back to the DB so we can
@@ -181,7 +235,8 @@ class Database:
     def get_all_sources(self) -> list[dict]:
         """Return all source channels as list of dicts."""
         cur = self.conn.execute(
-            "SELECT id, username, channel_id, added_at FROM source_channels ORDER BY id"
+            "SELECT id, username, channel_id, destination, added_at "
+            "FROM source_channels ORDER BY id"
         )
         return [dict(row) for row in cur.fetchall()]
 
