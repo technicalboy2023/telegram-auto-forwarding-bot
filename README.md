@@ -14,6 +14,7 @@
 - [Architecture](#-architecture)
 - [Prerequisites](#-prerequisites)
 - [Quick Setup (Alwaysdata)](#-quick-setup-alwaysdata)
+- [🚀 Start Forwarding — Telegram Setup](#-start-forwarding--telegram-setup)
 - [Local Setup](#-local-setup)
 - [All Commands](#-all-commands)
 - [Project Structure](#-project-structure)
@@ -113,7 +114,7 @@ Go to: https://www.alwaysdata.com/en/register/?p=2012
 ### Step 2: SSH Into Server
 
 ```bash
-ssh amna@ssh1.alwaysdata.net
+ssh YOUR_USERNAME@ssh-YOUR_USERNAME.alwaysdata.net
 # Enter the password you set at signup
 ```
 
@@ -173,29 +174,156 @@ python3 bot.py
 ### Step 6: Create 24/7 Service
 
 1. Browser: https://admin.alwaysdata.com/ → Login
-2. Left menu → **Services**
+2. Left menu → **Advanced** → **Services**
 3. **Add a service**:
 
 | Field | Value |
 |-------|-------|
-| **Name** | `telegram-forwarder` |
+| **SSH user** | `amna` (your Alwaysdata username) |
 | **Command** | `/home/amna/www/bot/venv/bin/python3 /home/amna/www/bot/bot.py` |
-| **Working directory** | `/home/amna/www/bot` |
+| **Monitoring command** | `/bin/true` |
 | **Environment** | `LOW_RAM=true` |
+| **Working directory** | `www/bot` |
+| **Paused** | Unchecked |
 
-> ⚠️ Replace `amna` with YOUR Alwaysdata username!
+> ⚠️ **Important**: 
+> - Replace `amna` with YOUR username!
+> - Working directory: just `www/bot` (NOT full path — Alwaysdata auto-prepends /home/user/)
+> - Monitoring command `/bin/true` is REQUIRED — without it, Alwaysdata kills the bot after 4 seconds!
 
-4. **Save** → **▶️ Start**
+4. **Submit** → **▶️ Start**
 
 ### Step 7: Verify
 
 ```bash
 # Check logs
-tail -f ~/www/bot/logs/bot.log
+cat ~/www/bot/logs/bot.log | tail -10
 
 # Or via Telegram
 # Open your control bot → /status
 ```
+
+---
+
+## 🚀 Start Forwarding — Telegram Setup
+
+> **After deploying**, open your Control Bot in Telegram and run these commands to configure forwarding.
+
+### Step 1: Add Source Channels
+
+```
+/add_source @DealsChannel
+/add_source @OffersChannel
+/add_source @TechNews
+```
+
+Add as many channels as you want. Your user account must be a **member** of each channel.
+
+| Command | Example |
+|---------|---------|
+| `/add_source @channel` | `/add_source @DealsChannel` |
+| `/remove_source @channel` | `/remove_source @DealsChannel` |
+| `/list_sources` | Shows all channels |
+
+### Step 2: Set Destination Bot
+
+```
+/set_dest @CueLinksBot
+```
+
+This is where all forwarded posts will go. Any bot works — CueLinks, your own bot, etc.
+
+| Command | Example |
+|---------|---------|
+| `/set_dest @bot` | `/set_dest @CueLinksBot` |
+| `/show_dest` | Shows current destination |
+
+### Step 3: Customize Posts (Optional)
+
+**Replace words/channel names:**
+```
+/add_replace @OldChannel➜@MyChannel
+/add_replace Amazon➜MyStore
+```
+
+**Block unwanted posts:**
+```
+/add_block Join @Competitor
+/add_block SpamWord
+```
+
+**Add header/footer to every post:**
+```
+/set_header 📢 Best Deals by @MyChannel
+/set_footer 🔔 Join @MyChannel for more!
+```
+
+### Step 4: Set Forward Delay
+
+```
+/set_delay 3
+```
+
+Default is 3 seconds. Increase to 5-10 if you have many source channels to avoid Telegram rate limits.
+
+### Step 5: Verify Everything
+
+```
+/status
+```
+
+Output should look like:
+```
+🤖 Bot Status: ▶️ RUNNING
+📡 Sources: 3
+🎯 Destination: @CueLinksBot
+⏱️ Forward Delay: 3.0s
+✅ Forwarded: 0
+⛔ Skipped: 0
+```
+
+### Step 6: Watch It Work
+
+That's it! The bot will now:
+1. Monitor all source channels for new posts
+2. Apply your customization rules (replace, block, header/footer)
+3. Forward to your destination bot automatically
+
+Check stats anytime:
+```
+/stats
+```
+
+### 🎯 Complete Example Flow
+
+```
+# 1. Add sources (one by one)
+/add_source @FlipkartDeals
+/add_source @AmazonOffers
+/add_source @TechDealsIndia
+
+# 2. Set destination
+/set_dest @CueLinksBot
+
+# 3. Customize
+/add_replace @FlipkartDeals➜@MyStore
+/add_replace @AmazonOffers➜@MyStore
+/add_block Join @Competitor
+/set_header 📢 Today's Best Deals 🛍️
+/set_footer 🔔 For more deals, join @MyStore
+
+# 4. Set delay
+/set_delay 4
+
+# 5. Check
+/status
+
+# 6. Start!
+/pause   (if paused)
+/resume  (to start forwarding)
+```
+
+**That's it! Now whenever @FlipkartDeals or @AmazonOffers post something, your bot will customize it and forward to @CueLinksBot!** 🎉
 
 ---
 
@@ -272,20 +400,6 @@ python3 bot.py
 | `/stats` | Statistics + recent activity |
 | `/set_delay 5` | Set delay between forwards (seconds) |
 
-### Examples
-
-```
-/add_source @DealsChannel
-/add_source @OffersChannel
-/set_dest @CueLinksBot
-/add_replace @DealsChannel➜@MyChannel
-/add_block Join @Competitor
-/set_header 📢 @MyChannel Deals
-/set_footer 🔔 Join @MyChannel for more!
-/set_delay 3
-/status
-```
-
 ---
 
 ## 📂 Project Structure
@@ -316,8 +430,11 @@ telegram-auto-forwarding-bot/
 │
 ├── requirements.txt          # 📦 Dependencies
 ├── .gitignore                # 🙈 Excludes sensitive files
+├── .env.example              # 📋 Environment template
 ├── README.md                 # 📖 You're reading it!
-└── setup_guide.md            # 📚 Hindi + English detailed guide
+├── setup_guide.md            # 📚 Hindi + English detailed guide
+├── ALL_IN_ONE.sh             # 🔧 Server fix & diagnostic tool
+└── SETUP_COMMANDS.txt        # 📋 Quick reference commands
 ```
 
 ---
@@ -382,8 +499,7 @@ git pull origin main
 Or via SSH:
 ```bash
 # Find and kill the process (Alwaysdata will auto-restart it)
-ps aux | grep bot.py
-kill <PID>
+pkill -9 -f "bot.py"
 ```
 
 ---
@@ -393,13 +509,15 @@ kill <PID>
 | Problem | Solution |
 |---------|----------|
 | **Bot not forwarding** | Check `/status` — source + destination set? `/pause` off? |
+| **Service dies after 4 sec** | Monitoring command must be `/bin/true` in Service settings |
 | **Session expired** | Delete `userbot_session.session` and re-run `python3 bot.py` |
 | **OOM killed (256MB)** | Reduce number of source channels, increase delay via `/set_delay 5` |
 | **Control bot ignoring me** | Check `admin_id` in config.json matches YOUR Telegram ID |
 | **Source posts not detected** | Your account must be a MEMBER of the source channel |
 | **FloodWaitError** | Auto-handled — bot waits then retries |
 | **2FA enabled** | Bot will ask for password on first login |
-| **Can't clone repo** | Repo is public — use HTTPS URL, no auth needed |
+| **"/home/user/www/bot doesnt exist"** | Working directory should be `www/bot` not full path |
+| **Conflict: terminated by other getUpdates** | Two bot instances running — kill one with `pkill -9 -f bot.py` |
 
 ### Check Logs
 
