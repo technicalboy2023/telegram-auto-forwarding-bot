@@ -16,6 +16,7 @@
 - [Quick Setup (Alwaysdata)](#-quick-setup-alwaysdata)
 - [🚀 Start Forwarding — Telegram Setup](#-start-forwarding--telegram-setup)
 - [✂️ Customization Examples](#-customization-examples)
+- [🎯 Multi-Bot Per-Source Routing](#-multi-bot-per-source-routing)
 - [Local Setup](#-local-setup)
 - [All Commands](#-all-commands)
 - [Project Structure](#-project-structure)
@@ -329,6 +330,89 @@ Check stats anytime:
 
 ---
 
+## 🎯 Multi-Bot Per-Source Routing
+
+> **Each source can have its own EXCLUSIVE destination bot.** Multiple source channels and multiple destination bots are supported — with strict per-source mapping so posts from one source NEVER go to the wrong bot.
+
+### Example: 2 sources, 2 different bots
+
+```
+@technicalgeardeals  → ALL posts → @cuelinks_bot   ONLY
+@btrickdeals        → ALL posts → @sankmo_bot     ONLY
+```
+
+Even if you have a 3rd bot `@xyz_bot` added in your account, it will **NEVER** receive any posts — the routing is exclusive per source.
+
+### Setup
+
+**Option 1: Atomic add (cleanest)** — `/add_source` accepts an optional 2nd argument for the destination bot:
+
+```
+/add_source @technicalgeardeals @cuelinks_bot
+/add_source @btrickdeals @sankmo_bot
+```
+
+**Option 2: Add first, then map** — useful if you already have sources added:
+
+```
+/add_source @technicalgeardeals
+/add_source @btrickdeals
+/set_source_dest @technicalgeardeals @cuelinks_bot
+/set_source_dest @btrickdeals @sankmo_bot
+```
+
+### Verify Routing
+
+```
+/list_sources
+```
+
+Reply shows each source + its destination:
+
+```
+📡 Source Channels & Their Destinations:
+
+  1. @technicalgeardeals → @cuelinks_bot (exclusive)
+     added 2026-07-06 13:24:58
+  2. @btrickdeals → @sankmo_bot (exclusive)
+     added 2026-07-06 13:25:53
+
+Use /set_source_dest @Channel @Bot to set an exclusive destination.
+```
+
+### Change Or Clear A Mapping
+
+```
+/set_source_dest @technicalgeardeals @newBot        # change to a new bot
+/set_source_dest @technicalgeardeals default         # clear (will use global /set_dest)
+```
+
+### Fallback Chain
+
+For each new post from a source, the bot looks up the destination in this order:
+
+```
+1. PER-SOURCE destination (if /set_source_dest was used)
+       ↓ if not set
+2. GLOBAL /set_dest bot
+       ↓ if not set
+3. POST IS SKIPPED + warning logged
+       (no message sent anywhere)
+```
+
+### How It Works (Under The Hood)
+
+| File | Change |
+|------|--------|
+| `database/db.py` | `source_channels.destination` column added (NULL = use global) |
+| `controlbot/handlers.py` | `/add_source` accepts optional 2nd arg; new `/set_source_dest` command; `/list_sources` shows per-source mapping |
+| `userbot/engine.py` | Forwarding engine reads `source.destination` first, falls back to `db.get_destination()` |
+| `controlbot/bot.py` | New `/set_source_dest` command registered (22 commands total) |
+
+**Backward compatible**: existing setups (with global `/set_dest` and no per-source mapping) keep working without changes. On first bot start, the migration adds the new column automatically.
+
+---
+
 ## ✂️ Customization Examples
 
 > **The customization commands are the most powerful feature** — they let you transform raw source posts into your branded, monetizable content. Below is a real-world walkthrough with everything you need.
@@ -450,9 +534,11 @@ python3 bot.py
 
 | Command | What It Does |
 |---------|-------------|
-| `/add_source @channel` | Add source channel to monitor |
+| `/add_source @channel` | Add source channel to monitor (uses global destination) |
+| `/add_source @channel @bot` | Add source with EXCLUSIVE destination bot |
+| `/set_source_dest @channel @bot` | Set/change a source's exclusive destination |
 | `/remove_source @channel` | Stop monitoring a channel |
-| `/list_sources` | Show all monitored channels |
+| `/list_sources` | Show all sources + their per-source destinations |
 
 ### Destination
 
