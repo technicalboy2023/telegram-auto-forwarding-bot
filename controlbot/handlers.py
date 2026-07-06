@@ -43,14 +43,6 @@ async def _admin_only(update: Update) -> bool:
     return True
 
 
-def _escape_md(text: str) -> str:
-    """Escape Markdown special characters."""
-    special = r"_*[]()~`>#+-=|{}.!"
-    for ch in special:
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
-
 def _escape_html(text: str) -> str:
     """Escape HTML special characters for safe telegram HTML parse_mode."""
     return (
@@ -79,11 +71,12 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not args:
         await update.message.reply_text(
             "❌ Usage:\n"
-            "  `/add_source @channel` — use global /set_dest bot\n"
-            "  `/add_source @channel @destinationBot` — set destination\n\n"
+            "  <code>/add_source @channel</code> — use global /set_dest bot\n"
+            "  <code>/add_source @channel @destinationBot</code> — set destination\n\n"
             "Examples:\n"
-            "  `/add_source @DealsChannel`\n"
-            "  `/add_source @DealsChannel @CueLinksBot`\n",
+            "  <code>/add_source @DealsChannel</code>\n"
+            "  <code>/add_source @DealsChannel @CueLinksBot</code>",
+            parse_mode="HTML",
         )
         return
 
@@ -92,20 +85,23 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if db.add_source(username, dest=dest):
         if dest:
             await update.message.reply_text(
-                f"✅ Source channel `@{username}` added!\n"
-                f"📡 Forwarding to `@{dest}`.\n"
-                f"Use `/add_dest @{username} @Bot2` to add more destinations.",
+                f"✅ Source channel <code>@{_escape_html(username)}</code> added!\n"
+                f"📡 Forwarding to <code>@{_escape_html(dest)}</code>.\n"
+                f"Use <code>/add_dest @{_escape_html(username)} @Bot2</code> to add more destinations.",
+                parse_mode="HTML",
             )
         else:
             await update.message.reply_text(
-                f"✅ Source channel `@{username}` added!\n"
-                f"📡 Will forward to the global destination (set via `/set_dest @bot`).",
+                f"✅ Source channel <code>@{_escape_html(username)}</code> added!\n"
+                f"📡 Will forward to the global destination (set via <code>/set_dest @bot</code>).",
+                parse_mode="HTML",
             )
     else:
         await update.message.reply_text(
-            f"⚠️ `@{username}` is already in your source list.\n"
-            f"Use `/set_source_dest @{username} @Bot` to change its destination "
-            f"or `/add_dest @{username} @Bot` to add more destinations.",
+            f"⚠️ <code>@{_escape_html(username)}</code> is already in your source list.\n"
+            f"Use <code>/set_source_dest @{_escape_html(username)} @Bot</code> to change its destination "
+            f"or <code>/add_dest @{_escape_html(username)} @Bot</code> to add more destinations.",
+            parse_mode="HTML",
         )
 
 
@@ -118,20 +114,20 @@ async def set_source_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "❌ Usage: `/set_source_dest @channel @Bot`\n\n"
+"❌ Usage: <code>/set_source_dest @channel @Bot</code>\n\n"
             "Set a per-source EXCLUSIVE destination bot.\n"
-            "Pass `default` as the bot to clear the mapping (will use global /set_dest).\n\n"
+            "Pass <code>default</code> as the bot to clear the mapping (will use global /set_dest).\n\n"
             "Examples:\n"
-            "  `/set_source_dest @technicalgeardeals @CueLinksBot`\n"
-            "  `/set_source_dest @btrickdeals @SankmoBot`\n"
-            "  `/set_source_dest @btrickdeals default` — clear mapping",
+            "  <code>/set_source_dest @technicalgeardeals @CueLinksBot</code>\n"
+            "  <code>/set_source_dest @btrickdeals @SankmoBot</code>\n"
+            "  <code>/set_source_dest @btrickdeals default</code> — clear mapping",
+            parse_mode="HTML",
         )
         return
 
     source = args[0].lstrip("@").strip()
     dest_raw = args[1].strip()
 
-    # 'default' (case-insensitive) clears the mapping
     if dest_raw.lower() in ("default", "reset", "clear", "none", "-"):
         dest: str | None = None
     else:
@@ -140,16 +136,19 @@ async def set_source_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if db.set_source_destination(source, dest):
         if dest:
             await update.message.reply_text(
-                f"✅ Source `@{source}` now forwards EXCLUSIVELY to `@{dest}`.\n"
+                f"✅ Source <code>@{_escape_html(source)}</code> now forwards EXCLUSIVELY to <code>@{_escape_html(dest)}</code>.\n"
                 f"Other bots will NOT receive posts from this source.",
+                parse_mode="HTML",
             )
         else:
             await update.message.reply_text(
-                f"✅ Source `@{source}` cleared — will now use the global /set_dest bot.",
+                f"✅ Source <code>@{_escape_html(source)}</code> cleared — will now use the global /set_dest bot.",
+                parse_mode="HTML",
             )
     else:
         await update.message.reply_text(
-            f"⚠️ Source `@{source}` not found. Add it first with `/add_source @{source}`.",
+            f"⚠️ Source <code>@{_escape_html(source)}</code> not found. Add it first with <code>/add_source @{_escape_html(source)}</code>.",
+            parse_mode="HTML",
         )
 
 
@@ -162,15 +161,23 @@ async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/remove_source @channel`\n\nExample: `/remove_source @DealsChannel`",
+            "❌ Usage: <code>/remove_source @channel</code>\n\n"
+            "Example: <code>/remove_source @DealsChannel</code>",
+            parse_mode="HTML",
         )
         return
 
     username = args[0].lstrip("@").strip()
     if db.remove_source(username):
-        await update.message.reply_text(f"🗑️ Source channel `@{username}` removed.")
+        await update.message.reply_text(
+            f"🗑️ Source channel <code>@{_escape_html(username)}</code> removed.",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"⚠️ `@{username}` not found in source list.")
+        await update.message.reply_text(
+            f"⚠️ <code>@{_escape_html(username)}</code> not found in source list.",
+            parse_mode="HTML",
+        )
 
 
 async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -182,13 +189,14 @@ async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "❌ Usage: `/add_dest @channel @bot`\n\n"
+            "❌ Usage: <code>/add_dest @channel @bot</code>\n\n"
             "Add another bot destination for a source channel.\n"
             "The source's posts will be forwarded to ALL bots in its destination list.\n\n"
             "Examples:\n"
-            "  `/add_dest @technicalgeardeals @cuelinks_bot`\n"
-            "  `/add_dest @technicalgeardeals @sankmo_bot`\n"
-            "  `/list_dests @technicalgeardeals` — view all destinations",
+            "  <code>/add_dest @technicalgeardeals @cuelinks_bot</code>\n"
+            "  <code>/add_dest @technicalgeardeals @sankmo_bot</code>\n"
+            "  <code>/list_dests @technicalgeardeals</code> — view all destinations",
+            parse_mode="HTML",
         )
         return
 
@@ -201,21 +209,23 @@ async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if db.add_source_dest(source, bot):
         await update.message.reply_text(
-            f"✅ Added `@{bot}` to `@{source}`'s destination list.\n"
-            f"Use `/list_dests @{source}` to see all destinations.",
+            f"✅ Added <code>@{_escape_html(bot)}</code> to <code>@{_escape_html(source)}</code>'s destination list.\n"
+            f"Use <code>/list_dests @{_escape_html(source)}</code> to see all destinations.",
+            parse_mode="HTML",
         )
     else:
-        # Try to give a helpful error message
         sources = db.get_all_sources()
         found = any(s["username"] == source for s in sources)
         if not found:
             await update.message.reply_text(
-                f"⚠️ Source `@{source}` not found. Add it first with `/add_source @{source}`.",
+                f"⚠️ Source <code>@{_escape_html(source)}</code> not found. Add it first with <code>/add_source @{_escape_html(source)}</code>.",
+                parse_mode="HTML",
             )
         else:
             await update.message.reply_text(
-                f"⚠️ `@{bot}` is already in `@{source}`'s destination list "
-                f"or source not found.\nUse `/list_dests @{source}` to check.",
+                f"⚠️ <code>@{_escape_html(bot)}</code> is already in <code>@{_escape_html(source)}</code>'s destination list.\n"
+                f"Use <code>/list_dests @{_escape_html(source)}</code> to check.",
+                parse_mode="HTML",
             )
 
 
@@ -228,10 +238,11 @@ async def remove_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     args = context.args
     if len(args) < 2:
         await update.message.reply_text(
-            "❌ Usage: `/remove_dest @channel @bot`\n\n"
+            "❌ Usage: <code>/remove_dest @channel @bot</code>\n\n"
             "Remove a bot from a source's destination list.\n\n"
             "Example:\n"
-            "  `/remove_dest @technicalgeardeals @sankmo_bot`",
+            "  <code>/remove_dest @technicalgeardeals @sankmo_bot</code>",
+            parse_mode="HTML",
         )
         return
 
@@ -240,13 +251,15 @@ async def remove_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if db.remove_source_dest(source, bot):
         await update.message.reply_text(
-            f"🗑️ Removed `@{bot}` from `@{source}`'s destination list.\n"
-            f"Use `/list_dests @{source}` to see remaining destinations.",
+            f"🗑️ Removed <code>@{_escape_html(bot)}</code> from <code>@{_escape_html(source)}</code>'s destination list.\n"
+            f"Use <code>/list_dests @{_escape_html(source)}</code> to see remaining destinations.",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
-            f"⚠️ Could not remove. Check that `@{source}` exists and "
-            f"`@{bot}` is in its destination list.",
+            f"⚠️ Could not remove. Check that <code>@{_escape_html(source)}</code> exists and "
+            f"<code>@{_escape_html(bot)}</code> is in its destination list.",
+            parse_mode="HTML",
         )
 
 
@@ -259,11 +272,11 @@ async def list_dests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/list_dests @channel`\n\n"
+            "❌ Usage: <code>/list_dests @channel</code>\n\n"
             "Show all destination bots for a source channel.\n"
-            "Example: `/list_dests @technicalgeardeals`\n"
-            "\n"
-            "Tip: Use `/list_sources` to see all sources and their destinations.",
+            "Example: <code>/list_dests @technicalgeardeals</code>\n\n"
+            "Tip: Use <code>/list_sources</code> to see all sources and their destinations.",
+            parse_mode="HTML",
         )
         return
 
@@ -274,7 +287,9 @@ async def list_dests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     src_info = next((s for s in sources if s["username"] == source), None)
     if not src_info:
         await update.message.reply_text(
-            f"⚠️ Source `@{source}` not found.\nUse `/list_sources` to see all sources.",
+            f"⚠️ Source <code>@{_escape_html(source)}</code> not found.\n"
+            f"Use <code>/list_sources</code> to see all sources.",
+            parse_mode="HTML",
         )
         return
 
@@ -311,8 +326,9 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     sources = db.get_all_sources()
     if not sources:
         await update.message.reply_text(
-            "📭 No source channels configured.\nUse `/add_source @channel` to add one.",
-            parse_mode=None,
+            "📭 No source channels configured.\n"
+            r"Use <code>/add_source @channel</code> to add one.",
+            parse_mode="HTML",
         )
         return
 
@@ -404,10 +420,11 @@ async def add_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     args = " ".join(context.args) if context.args else ""
     if not args or "➜" not in args:
         await update.message.reply_text(
-            "❌ Usage: `/add_replace OldWord➜NewWord`\n\n"
+            "❌ Usage: <code>/add_replace OldWord➜NewWord</code>\n\n"
             "Use the ➜ arrow to separate old and new words.\n"
-            "Example: `/add_replace @OldChannel➜@MyChannel`\n"
-            "To remove a word entirely, leave the right side empty: `/add_replace @BadChannel➜`",
+            "Example: <code>/add_replace @OldChannel➜@MyChannel</code>\n"
+            "To remove a word entirely, leave the right side empty: <code>/add_replace @BadChannel➜</code>",
+            parse_mode="HTML",
         )
         return
 
@@ -421,9 +438,15 @@ async def add_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     db.add_replace_rule(old_word, new_word)
     if new_word:
-        await update.message.reply_text(f"✅ Replace rule added: `{old_word}` → `{new_word}`")
+        await update.message.reply_text(
+            f"✅ Replace rule added: <code>{_escape_html(old_word)}</code> → <code>{_escape_html(new_word)}</code>",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"✅ Replace rule added: `{old_word}` → (removed)")
+        await update.message.reply_text(
+            f"✅ Replace rule added: <code>{_escape_html(old_word)}</code> → (removed)",
+            parse_mode="HTML",
+        )
 
 
 async def remove_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -435,15 +458,23 @@ async def remove_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/remove_replace OldWord`\n\nExample: `/remove_replace @OldChannel`",
+            "❌ Usage: <code>/remove_replace OldWord</code>\n\n"
+            "Example: <code>/remove_replace @OldChannel</code>",
+            parse_mode="HTML",
         )
         return
 
     old_word = " ".join(args).strip()
     if db.remove_replace_rule(old_word):
-        await update.message.reply_text(f"🗑️ Replace rule for `{old_word}` removed.")
+        await update.message.reply_text(
+            f"🗑️ Replace rule for <code>{_escape_html(old_word)}</code> removed.",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"⚠️ No replace rule found for `{old_word}`.")
+        await update.message.reply_text(
+            f"⚠️ No replace rule found for <code>{_escape_html(old_word)}</code>.",
+            parse_mode="HTML",
+        )
 
 
 async def list_replaces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -455,8 +486,9 @@ async def list_replaces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     rules = db.get_all_replace_rules()
     if not rules:
         await update.message.reply_text(
-            "📭 No replace rules configured.\nUse `/add_replace Old➜New` to create one.",
-            parse_mode=None,
+            "📭 No replace rules configured.\n"
+            r"Use <code>/add_replace Old➜New</code> to create one.",
+            parse_mode="HTML",
         )
         return
 
@@ -485,17 +517,25 @@ async def add_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/add_block BadWord`\n\n"
+            "❌ Usage: <code>/add_block BadWord</code>\n\n"
             "Posts containing this word will be skipped.\n"
-            "Example: `/add_block Join @OtherChannel`",
+            "Example: <code>/add_block Join @OtherChannel</code>",
+            parse_mode="HTML",
         )
         return
 
     word = " ".join(args).strip()
     if db.add_block_rule(word):
-        await update.message.reply_text(f"🚫 Block rule added: `{word}`\nPosts containing this will be skipped.")
+        await update.message.reply_text(
+            f"🚫 Block rule added: <code>{_escape_html(word)}</code>\n"
+            f"Posts containing this will be skipped.",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"⚠️ `{word}` is already in the block list.")
+        await update.message.reply_text(
+            f"⚠️ <code>{_escape_html(word)}</code> is already in the block list.",
+            parse_mode="HTML",
+        )
 
 
 async def remove_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -507,15 +547,23 @@ async def remove_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/remove_block BadWord`\n\nExample: `/remove_block Join @OtherChannel`",
+            "❌ Usage: <code>/remove_block BadWord</code>\n\n"
+            "Example: <code>/remove_block Join @OtherChannel</code>",
+            parse_mode="HTML",
         )
         return
 
     word = " ".join(args).strip()
     if db.remove_block_rule(word):
-        await update.message.reply_text(f"🗑️ Block rule for `{word}` removed.")
+        await update.message.reply_text(
+            f"🗑️ Block rule for <code>{_escape_html(word)}</code> removed.",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"⚠️ No block rule found for `{word}`.")
+        await update.message.reply_text(
+            f"⚠️ No block rule found for <code>{_escape_html(word)}</code>.",
+            parse_mode="HTML",
+        )
 
 
 async def list_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -527,8 +575,8 @@ async def list_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     rules = db.get_all_block_rules()
     if not rules:
         await update.message.reply_text(
-            "📭 No block rules configured.\nUse `/add_block Word` to create one.",
-            parse_mode=None,
+            "📭 No block rules configured.\n" r"Use <code>/add_block Word</code> to create one.",
+            parse_mode="HTML",
         )
         return
 
@@ -552,15 +600,19 @@ async def set_header(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/set_header Text`\n\n"
+            "❌ Usage: <code>/set_header Text</code>\n\n"
             "This text will be added at the TOP of every forwarded post.\n"
-            "Example: `/set_header 📢 @MyDealsChannel`",
+            "Example: <code>/set_header 📢 @MyDealsChannel</code>",
+            parse_mode="HTML",
         )
         return
 
     text = " ".join(args).strip()
     db.set_header(text)
-    await update.message.reply_text(f"📌 Header set:\n\n{text}")
+    await update.message.reply_text(
+        f"📌 Header set:\n\n{_escape_html(text)}",
+        parse_mode="HTML",
+    )
 
 
 async def set_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -572,15 +624,19 @@ async def set_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Usage: `/set_footer Text`\n\n"
+            "❌ Usage: <code>/set_footer Text</code>\n\n"
             "This text will be added at the BOTTOM of every forwarded post.\n"
-            "Example: `/set_footer 🔔 Join @MyDealsChannel for more!`",
+            "Example: <code>/set_footer 🔔 Join @MyDealsChannel for more!</code>",
+            parse_mode="HTML",
         )
         return
 
     text = " ".join(args).strip()
     db.set_footer(text)
-    await update.message.reply_text(f"📌 Footer set:\n\n{text}")
+    await update.message.reply_text(
+        f"📌 Footer set:\n\n{_escape_html(text)}",
+        parse_mode="HTML",
+    )
 
 
 async def clear_header(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -618,9 +674,6 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     pause_text = "⏸️ PAUSED" if stats["paused"] else "▶️ RUNNING"
 
-    # Build using HTML so the dynamic fields (counts, delay, destination) never
-    # break the parser. The whole message is also editable by handle_callback
-    # using the same HTML parse mode safely.
     safe_dest = _escape_html(dest) if dest else _escape_html("NOT SET")
     lines = [
         f"🤖 <b>Bot Status: {pause_text}</b>",
@@ -653,7 +706,10 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     db: Database = context.bot_data["db"]
     db.set_paused(True)
-    await update.message.reply_text("⏸️ Forwarding PAUSED. Use `/resume` to continue.")
+    await update.message.reply_text(
+        "⏸️ Forwarding PAUSED. Use <code>/resume</code> to continue.",
+        parse_mode="HTML",
+    )
 
 
 async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -666,8 +722,9 @@ async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not args:
         current = db.get_forward_delay()
         await update.message.reply_text(
-            f"⏱️ Current forward delay: `{current:.1f}s`\n\n"
-            "Usage: `/set_delay 5` (seconds, minimum 1)",
+            f"⏱️ Current forward delay: <code>{current:.1f}s</code>\n\n"
+            "Usage: <code>/set_delay 5</code> (seconds, minimum 1)",
+            parse_mode="HTML",
         )
         return
 
@@ -677,9 +734,15 @@ async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("❌ Delay must be at least 1 second.")
             return
         db.set_forward_delay(seconds)
-        await update.message.reply_text(f"⏱️ Forward delay set to `{seconds:.1f}s`.")
+        await update.message.reply_text(
+            f"⏱️ Forward delay set to <code>{seconds:.1f}s</code>.",
+            parse_mode="HTML",
+        )
     except ValueError:
-        await update.message.reply_text("❌ Please provide a valid number (e.g., `/set_delay 5`).")
+        await update.message.reply_text(
+            "❌ Please provide a valid number (e.g., <code>/set_delay 5</code>).",
+            parse_mode="HTML",
+        )
 
 
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
