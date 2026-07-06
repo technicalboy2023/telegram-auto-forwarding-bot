@@ -46,7 +46,8 @@ logger = get_logger(__name__)
 HISTORY_RETENTION_DAYS: int = int(os.environ.get("HISTORY_RETENTION_DAYS", "30"))
 LOG_RETENTION_DAYS: int = int(os.environ.get("LOG_RETENTION_DAYS", "7"))
 CLEANUP_INTERVAL_HOURS: int = int(os.environ.get("CLEANUP_INTERVAL_HOURS", "24"))
-DISABLE_CLEANUP: bool = bool(os.environ.get("NO_CLEANUP"))
+_no_cleanup_raw = os.environ.get("NO_CLEANUP", "").strip().lower()
+DISABLE_CLEANUP: bool = _no_cleanup_raw not in ("", "0", "false", "no")
 
 # Project root is the parent of utils/.
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent

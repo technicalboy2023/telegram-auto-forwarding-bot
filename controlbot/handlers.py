@@ -89,10 +89,6 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     username = args[0].lstrip("@").strip()
     dest = args[1].lstrip("@").strip() if len(args) >= 2 else None
-    if dest and not dest:
-        await update.message.reply_text("❌ Destination bot username cannot be empty.")
-        return
-
     if db.add_source(username, dest=dest):
         if dest:
             await update.message.reply_text(
@@ -705,11 +701,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     recent = db.get_recent_history(10)
 
     lines = [
-        "📊 *Statistics*",
+        "📊 <b>Statistics</b>",
         "",
-        f"✅ Total Forwarded: `{s['total_forwarded']}`",
-        f"⛔ Total Skipped: `{s['total_skipped']}`",
-        f"📡 Active Sources: `{s['source_count']}`",
+        f"✅ Total Forwarded: <code>{s['total_forwarded']}</code>",
+        f"⛔ Total Skipped: <code>{s['total_skipped']}</code>",
+        f"📡 Active Sources: <code>{s['source_count']}</code>",
         "",
     ]
 

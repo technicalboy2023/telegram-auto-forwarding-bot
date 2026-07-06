@@ -82,13 +82,16 @@ class UserbotEngine:
             app_version="1.0",              # minimal app version
         )
 
-        # Register event handler (catch_up=False skips replaying old messages, saves RAM)
+        # CRITICAL: Set catch_up=False BEFORE registering the event handler!
+        # If set after, Telethon starts replaying backlog messages first and
+        # the handler fires for ALL missed messages → RAM spike → OOM kill.
+        self.client.catch_up = False
+
+        # Register event handler (catch_up already disabled above)
         self.client.add_event_handler(
             self._on_new_message,
             events.NewMessage(incoming=True),
         )
-        # Disable catch-up to avoid memory spike from backlog of missed messages
-        self.client.catch_up = False
 
         await self.client.start(phone=self.phone)
         me = await self.client.get_me()
@@ -324,6 +327,7 @@ class UserbotEngine:
             skip_delay: When True, skip the rate-limiting sleep. Used when
                         the caller already applied the delay once (multi-dest).
         """
+        delay: float = 0.0  # default: safe for multi-dest where skip_delay=True
         try:
             # Rate limiting delay (skipped for multi-dest — caller handles it)
             if not skip_delay:
@@ -377,8 +381,8 @@ class UserbotEngine:
                 )
             # Retry once after waiting
             try:
-                delay = self.db.get_forward_delay()
-                await asyncio.sleep(delay)
+                retry_delay = self.db.get_forward_delay()
+                await asyncio.sleep(retry_delay)
                 dest_entity = await self.client.get_input_entity(f"@{dest_username}")
                 await self._send_single_forward(
                     dest_entity, original_message, processed_caption
@@ -390,7 +394,7 @@ class UserbotEngine:
                     "Forwarded to @%s | source_id=%d | delay=%.1fs (after flood wait)",
                     dest_username,
                     source_db_id,
-                    delay,
+                    retry_delay,
                 )
                 self._forward_count += 1
                 if self._forward_count % 5 == 0:
