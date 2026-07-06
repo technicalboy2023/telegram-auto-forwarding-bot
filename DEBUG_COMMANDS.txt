@@ -1,0 +1,29 @@
+================================================================================
+  DEBUG COMMANDS — Check why bot crashed (SIGTERM after 4 sec)
+================================================================================
+
+---------- SSH Login ----------
+ssh amna@ssh1.alwaysdata.net
+
+
+---------- Check last 30 lines of bot logs ----------
+cat ~/www/bot/logs/bot.log | tail -30
+
+
+---------- Check if bot_data.db exists ----------
+ls -la ~/www/bot/bot_data.db
+
+
+---------- Check if session file exists ----------
+ls -la ~/www/bot/userbot_session.session
+
+
+---------- Check disk space ----------
+df -h ~
+
+
+---------- Check if config.json is valid ----------
+cd ~/www/bot
+source venv/bin/activate
+python3 -c "import json; cfgp=json.load(open('config.json')); print('API_ID:', cfg.get('api_id','MISSING')); print('PHONE:', cfg.get('phone','MISSING')); print('BOT_TOKEN:', cfg.get('bot_token','MISSING')[:10]+'...'); print('ADMIN_ID:', cfg.get('admin_id','MISSING'))"
+================================================================================

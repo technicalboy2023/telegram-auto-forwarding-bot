@@ -1,0 +1,102 @@
+================================================================================
+     ALWAYSDATA 24/7 SETUP — Copy-paste each line one by one
+================================================================================
+
+---------- STEP 1: SSH to server ----------
+ssh amna@ssh1.alwaysdata.net
+
+
+---------- STEP 2: Pull latest fixes ----------
+cd ~/www/bot
+git pull origin main
+
+
+---------- STEP 3: Stop old bot if running ----------
+pkill -f bot.py
+
+
+---------- STEP 4: Create 24/7 Service ----------
+(Do this in browser, NOT terminal)
+
+Open: https://admin.alwaysdata.com
+
+Login → Left menu → Services → Add a service
+
+Fill these EXACT values:
+
+  NAME:
+  telegram-forwarder
+
+  COMMAND:
+  /home/amna/www/bot/venv/bin/python3 /home/amna/www/bot/bot.py
+
+  WORKING DIRECTORY:
+  /home/amna/www/bot
+
+  ENVIRONMENT:
+  LOW_RAM=true
+
+Click SAVE
+Click START (play button)
+
+
+---------- STEP 5: Check if running ----------
+(Back in SSH terminal)
+tail -f ~/www/bot/logs/bot.log
+
+Press Ctrl+C to exit logs
+
+
+---------- STEP 6: Test from Telegram ----------
+Open your Control Bot in Telegram, send:
+
+/start
+
+Then:
+
+/status
+
+You should get replies!
+
+
+---------- STEP 7: Add source channels ----------
+In Telegram Control Bot, send:
+
+/add_source @YourChannelName
+
+Add more sources:
+
+/add_source @AnotherChannel
+
+
+---------- STEP 8: Set destination ----------
+/set_dest @YourBot
+
+
+---------- STEP 9: Check all good ----------
+/status
+
+You should see: Sources: 2, Destination: @YourBot, Status: RUNNING
+
+
+================================================================================
+  DONE! Bot running 24/7. Auto-restarts every 6 hours.
+  Auto-recovers if crash. FREE hosting, no card needed.
+================================================================================
+
+---------- USEFUL COMMANDS ----------
+
+Check logs:
+tail -50 ~/www/bot/logs/bot.log
+
+Restart service:
+(Admin Panel → Services → telegram-forwarder → Restart)
+
+Update code:
+cd ~/www/bot
+git pull origin main
+(Then restart service from Admin Panel)
+
+Service status:
+(Admin Panel → Services → look at status icon)
+================================================================================
