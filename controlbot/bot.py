@@ -9,11 +9,16 @@ admin_id can use the bot.
 import json
 from pathlib import Path
 
+from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
+    ContextTypes,
 )
+
+from utils.logger import get_logger
+logger = get_logger(__name__)
 
 from controlbot.handlers import (
     add_source,
@@ -39,9 +44,9 @@ from controlbot.handlers import (
     help_cmd,
     handle_callback,
     set_delay,
+    _get_admin_id,
 )
 from database.db import Database
-from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -104,9 +109,44 @@ def build_application(db: Database) -> Application:
     # Callback queries (inline buttons)
     app.add_handler(CallbackQueryHandler(handle_callback))
 
+    # ── Global error handler ──
+    # Without this, any exception in a command handler is silently swallowed
+    # and the user never gets a reply. This guarantees the admin sees an error.
+    app.add_error_handler(_on_ptb_error)
+
     logger.info("Control bot handlers registered (%d commands)", 21)
 
     return app
+
+
+async def _on_ptb_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Global PTB error handler — logs the exception and notifies the admin
+    on Telegram so silent failures don't leave the admin wondering.
+    """
+    logger.error("Unhandled exception in PTB handler:", exc_info=context.error)
+
+    try:
+        admin_id = _get_admin_id()
+        chat_id = None
+        if isinstance(update, Update) and update.effective_chat:
+            chat_id = update.effective_chat.id
+        elif isinstance(update, Update) and update.callback_query:
+            chat_id = update.callback_query.message.chat_id if update.callback_query.message else None
+
+        if chat_id is not None:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "⚠️ *Internal Error*\n\n"
+                    f"Something went wrong: `{type(context.error).__name__}`\n"
+                    "Check `/logs` on the server for full traceback."
+                ),
+                parse_mode="Markdown",
+            )
+    except Exception:
+        # Last-resort guard — don't let the error handler itself crash the poll loop
+        logger.exception("Error handler itself failed")
 
 
 def _add_handler(app: Application, command: str, handler) -> None:

@@ -151,7 +151,13 @@ def main():
             try:
                 await userbot.start()
             except asyncio.CancelledError:
-                pass
+                # Auto-restart or shutdown trigger — disconnect cleanly so the
+                # MTProto session file is not corrupted on disk.
+                logger.info("Userbot task cancelled — disconnecting cleanly...")
+                try:
+                    await userbot.stop()
+                except Exception as e:
+                    logger.warning("Userbot stop() during cancel failed: %s", e)
             except Exception as e:
                 logger.error("Userbot crashed: %s", e, exc_info=True)
             finally:

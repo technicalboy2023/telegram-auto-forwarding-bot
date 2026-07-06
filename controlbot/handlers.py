@@ -51,6 +51,16 @@ def _escape_md(text: str) -> str:
     return text
 
 
+def _escape_html(text: str) -> str:
+    """Escape HTML special characters for safe telegram HTML parse_mode."""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 # ────────────────────────────────────────────────────────────
 #  Source Channel Management
 # ────────────────────────────────────────────────────────────
@@ -103,14 +113,22 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     sources = db.get_all_sources()
     if not sources:
-        await update.message.reply_text("📭 No source channels configured.\nUse `/add_source @channel` to add one.")
+        await update.message.reply_text(
+            "📭 No source channels configured.\nUse `/add_source @channel` to add one.",
+            parse_mode=None,
+        )
         return
 
-    lines = ["📡 *Source Channels:*"]
+    # Build message line-by-line using HTML escaping for safe dynamic content.
+    # MarkdownV2 is too brittle — dates like "2026-07-06" contain hyphens that
+    # need careful escaping. HTML mode is much more forgiving.
+    lines = ["📡 <b>Source Channels:</b>"]
     for i, s in enumerate(sources, 1):
-        lines.append(f"  {i}\\. `@{s['username']}` — added {s['added_at']}")
+        username = _escape_html(s["username"])
+        added_at = _escape_html(s["added_at"])
+        lines.append(f"  {i}. <code>@{username}</code> — added {added_at}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
@@ -214,15 +232,22 @@ async def list_replaces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     rules = db.get_all_replace_rules()
     if not rules:
-        await update.message.reply_text("📭 No replace rules configured.\nUse `/add_replace Old➜New` to create one.")
+        await update.message.reply_text(
+            "📭 No replace rules configured.\nUse `/add_replace Old➜New` to create one.",
+            parse_mode=None,
+        )
         return
 
-    lines = ["✂️ *Replace Rules:*"]
+    lines = ["✂️ <b>Replace Rules:</b>"]
     for i, r in enumerate(rules, 1):
-        new = f"`{r['new_word']}`" if r["new_word"] else "(removed)"
-        lines.append(f"  {i}\\. `{_escape_md(r['old_word'])}` → {new}")
+        old = _escape_html(r["old_word"])
+        if r["new_word"]:
+            new = f"<code>{_escape_html(r['new_word'])}</code>"
+        else:
+            new = "(removed)"
+        lines.append(f"  {i}. <code>{old}</code> → {new}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
@@ -279,14 +304,17 @@ async def list_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     rules = db.get_all_block_rules()
     if not rules:
-        await update.message.reply_text("📭 No block rules configured.\nUse `/add_block Word` to create one.")
+        await update.message.reply_text(
+            "📭 No block rules configured.\nUse `/add_block Word` to create one.",
+            parse_mode=None,
+        )
         return
 
-    lines = ["🚫 *Blocked Words:*"]
+    lines = ["🚫 <b>Blocked Words:</b>"]
     for i, r in enumerate(rules, 1):
-        lines.append(f"  {i}\\. `{_escape_md(r['word'])}`")
+        lines.append(f"  {i}. <code>{_escape_html(r['word'])}</code>")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
@@ -456,12 +484,14 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ]
 
     if recent:
-        lines.append("*Recent Activity:*")
+        lines.append("<b>Recent Activity:</b>")
         for r in recent:
             emoji = "✅" if r["status"] == "forwarded" else "⛔"
-            lines.append(f"  {emoji} `@{r.get('source', '?')}` — {r['forwarded_at']}")
+            source = _escape_html(r.get("source") or "?")
+            ts = _escape_html(r["forwarded_at"])
+            lines.append(f"  {emoji} <code>@{source}</code> — {ts}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="MarkdownV2")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────

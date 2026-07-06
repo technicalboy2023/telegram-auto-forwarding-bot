@@ -124,9 +124,24 @@ class UserbotEngine:
         for src in sources:
             username = src["username"]
             try:
+                # Try resolving by username first (works for public channels)
                 entity = await self.client.get_input_entity(f"@{username}")
-                self._source_entities[username] = entity
-                logger.info("Resolved source: @%s (ID: %s)", username, getattr(entity, "channel_id", "?"))
+                key = username.lower()
+                self._source_entities[key] = entity
+                # Also store by channel_id so we can match private channels later
+                channel_id = getattr(entity, "channel_id", None)
+                if channel_id is not None:
+                    self._source_entities[f"id:{channel_id}"] = entity
+                    # Persist channel_id back to DB so we have a stable key
+                    try:
+                        self.db.update_source_channel_id(username, channel_id)
+                    except Exception:
+                        pass
+                logger.info(
+                    "Resolved source: @%s (ID: %s)",
+                    username,
+                    channel_id if channel_id else "?",
+                )
             except Exception as e:
                 logger.warning("Could not resolve @%s: %s", username, e)
 
@@ -166,20 +181,39 @@ class UserbotEngine:
         message = event.message
         chat = await event.get_chat()
 
-        # Verify this is from a monitored source
+        # Match against source list using either username (public) or channel_id (private).
+        # This way private channels without a @username still get monitored once resolved.
         source_username = getattr(chat, "username", None)
-        if not source_username or source_username.lower() not in {
-            s.lower() for s in self._source_entities
-        }:
+        source_channel_id = getattr(chat, "id", None)
+
+        matched_username = None
+        if source_username:
+            u = source_username.lower()
+            if u in self._source_entities:
+                matched_username = source_username
+        if matched_username is None and source_channel_id is not None:
+            key = f"id:{source_channel_id}"
+            if key in self._source_entities:
+                # Look up which username backed this id
+                for src in self.db.get_all_sources():
+                    if src.get("channel_id") == source_channel_id:
+                        matched_username = src["username"]
+                        break
+
+        if matched_username is None:
             return  # Not from a tracked source
 
-        logger.info("New post from @%s (msg_id=%d)", source_username, message.id)
+        logger.info(
+            "New post from @%s (msg_id=%d)",
+            matched_username,
+            message.id,
+        )
 
         # Get source DB id
         sources = self.db.get_all_sources()
         source_db_id = None
         for s in sources:
-            if s["username"].lower() == source_username.lower():
+            if s["username"].lower() == matched_username.lower():
                 source_db_id = s["id"]
                 break
 

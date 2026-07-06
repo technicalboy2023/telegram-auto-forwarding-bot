@@ -65,7 +65,7 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS replace_rules (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    old_word    TEXT    NOT NULL,
+                    old_word    TEXT    NOT NULL UNIQUE,
                     new_word    TEXT    NOT NULL DEFAULT '',
                     created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
@@ -94,6 +94,27 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_fwd_hash  ON forward_history(message_hash);
             """)
             self.conn.commit()
+
+            # -- Migration: ensure replace_rules has UNIQUE constraint on old_word
+            # (handles upgrades from schema without it)
+            cur = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='replace_rules'"
+            )
+            indexes = [row[0] or "" for row in cur.fetchall()]
+            unique_index_present = any("UNIQUE" in idx and "old_word" in idx for idx in indexes)
+            if not unique_index_present:
+                self.conn.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_replace_unique ON replace_rules(old_word)"
+                )
+                # De-dupe pre-existing duplicates by keeping the lowest id row
+                self.conn.execute(
+                    """DELETE FROM replace_rules
+                       WHERE id NOT IN (
+                           SELECT MIN(id) FROM replace_rules GROUP BY old_word
+                       )"""
+                )
+                self.conn.commit()
+                logger.info("Migrated replace_rules: UNIQUE constraint on old_word applied.")
 
     def _set_defaults(self) -> None:
         """Ensure default settings rows exist."""
@@ -131,6 +152,18 @@ class Database:
                 return True
             except sqlite3.IntegrityError:
                 return False
+
+    def update_source_channel_id(self, username: str, channel_id: int) -> bool:
+        """Persist the resolved Telegram channel_id back to the DB so we can
+        match messages from private channels later. Returns True if updated."""
+        username = username.lstrip("@").strip()
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE source_channels SET channel_id = ? WHERE username = ?",
+                (channel_id, username),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
 
     def remove_source(self, username: str) -> bool:
         """Remove a source channel by username. Returns True if removed."""
@@ -180,15 +213,25 @@ class Database:
     # ──────────────────────────────────────────────
 
     def add_replace_rule(self, old_word: str, new_word: str = "") -> bool:
-        """Add a word-replacement rule. Returns True."""
+        """Add or replace (upsert) a word-replacement rule keyed by old_word.
+        Returns True if a new row was inserted, False if an existing rule was updated.
+        """
         with self._lock:
-            self.conn.execute(
-                "INSERT INTO replace_rules (old_word, new_word) VALUES (?, ?)",
+            cur = self.conn.execute(
+                """INSERT INTO replace_rules (old_word, new_word)
+                   VALUES (?, ?)
+                   ON CONFLICT(old_word) DO UPDATE SET new_word = excluded.new_word""",
                 (old_word, new_word),
             )
             self.conn.commit()
-            logger.info("Replace rule added: '%s' -> '%s'", old_word, new_word)
-            return True
+            inserted = cur.rowcount > 0
+            logger.info(
+                "Replace rule %s: '%s' -> '%s'",
+                "added" if inserted else "updated",
+                old_word,
+                new_word,
+            )
+            return inserted
 
     def remove_replace_rule(self, old_word: str) -> bool:
         with self._lock:
