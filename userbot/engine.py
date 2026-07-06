@@ -245,25 +245,37 @@ class UserbotEngine:
             logger.info("Post skipped (blocked) from @%s", source_username)
             return
 
-        # Get destination: per-source EXCLUSIVE mapping overrides global default.
-        # Fallback chain: per-source destination (if set) → global /set_dest bot.
-        dest_username = source_dest or self.db.get_destination()
-        if not dest_username:
+        # Get destinations: multi-dest list (source_destinations table) takes
+        # priority. If none, fall back to single destination column, then global.
+        dests = self.db.get_source_dests(matched_username)
+        if not dests:
+            single = source_dest or self.db.get_destination()
+            if single:
+                dests = [single]
+
+        if not dests:
             logger.warning(
                 "No destination bot set for @%s — post not forwarded. "
-                "Set one with /set_dest @Bot or /set_source_dest @%s @Bot",
+                "Set one with /set_dest @Bot or /add_dest @%s @Bot",
                 source_username, source_username,
             )
             return
 
-        # Forward with rate limiting
-        await self._forward_message(
-            dest_username,
-            message,
-            processed_caption,
-            source_db_id,
-            raw_text,
-        )
+        # Forward to EVERY destination in the list (rate-limited per message)
+        delay = self.db.get_forward_delay()
+        await asyncio.sleep(delay)
+        for i, dest_username in enumerate(dests):
+            # Small gap between destinations prevents FloodWait cascades
+            if i > 0:
+                await asyncio.sleep(1)
+            await self._forward_message(
+                dest_username,
+                message,
+                processed_caption,
+                source_db_id,
+                raw_text,
+                skip_delay=True,  # delay already applied once above
+            )
 
     async def _send_single_forward(
         self,
@@ -297,12 +309,19 @@ class UserbotEngine:
         processed_caption: Optional[str],
         source_db_id: int,
         raw_text: str,
+        skip_delay: bool = False,
     ) -> None:
-        """Forward a message to the destination bot with media support."""
+        """Forward a message to the destination bot with media support.
+
+        Args:
+            skip_delay: When True, skip the rate-limiting sleep. Used when
+                        the caller already applied the delay once (multi-dest).
+        """
         try:
-            # Rate limiting delay
-            delay = self.db.get_forward_delay()
-            await asyncio.sleep(delay)
+            # Rate limiting delay (skipped for multi-dest — caller handles it)
+            if not skip_delay:
+                delay = self.db.get_forward_delay()
+                await asyncio.sleep(delay)
 
             dest_entity = await self.client.get_input_entity(f"@{dest_username}")
 

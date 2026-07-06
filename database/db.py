@@ -93,6 +93,15 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_fwd_source ON forward_history(source_id);
                 CREATE INDEX IF NOT EXISTS idx_fwd_hash  ON forward_history(message_hash);
+
+                -- Multi-destination: 1 source → many bots
+                CREATE TABLE IF NOT EXISTS source_destinations (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id   INTEGER NOT NULL REFERENCES source_channels(id) ON DELETE CASCADE,
+                    bot_username TEXT NOT NULL,
+                    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(source_id, bot_username)
+                );
             """)
             self.conn.commit()
 
@@ -243,6 +252,139 @@ class Database:
     def get_source_count(self) -> int:
         cur = self.conn.execute("SELECT COUNT(*) FROM source_channels")
         return cur.fetchone()[0]
+
+    # ──────────────────────────────────────────────
+    #  Source Multi-Destinations (1 source → many bots)
+    # ──────────────────────────────────────────────
+
+    def add_source_dest(self, source_username: str, bot_username: str) -> bool:
+        """Add a bot destination for a source channel. Returns True if added.
+
+        If this is the FIRST destination being added and the source has an
+        existing `destination` column value, that bot is auto-included too
+        so the user doesn't lose the original exclusive mapping.
+        """
+        source_username = source_username.lstrip("@").strip()
+        bot_username = bot_username.lstrip("@").strip()
+        if not bot_username:
+            return False
+
+        with self._lock:
+            # Find source id
+            cur = self.conn.execute(
+                "SELECT id, destination FROM source_channels WHERE username = ?",
+                (source_username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            source_id = row["id"]
+            existing_dest = row["destination"]
+
+            # Check if this is the first dest — if so, auto-include the
+            # existing `destination` column bot so user doesn't lose it.
+            cur = self.conn.execute(
+                "SELECT COUNT(*) FROM source_destinations WHERE source_id = ?",
+                (source_id,),
+            )
+            dest_count = cur.fetchone()[0]
+
+            if dest_count == 0 and existing_dest:
+                # Auto-add the existing exclusive destination as well
+                try:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
+                        (source_id, existing_dest),
+                    )
+                except sqlite3.IntegrityError:
+                    pass
+
+            # Add the new destination
+            try:
+                self.conn.execute(
+                    "INSERT INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
+                    (source_id, bot_username),
+                )
+                self.conn.commit()
+                logger.info(
+                    "Dest added for @%s: @%s", source_username, bot_username
+                )
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_source_dest(self, source_username: str, bot_username: str) -> bool:
+        """Remove a bot destination from a source. Returns True if removed."""
+        source_username = source_username.lstrip("@").strip()
+        bot_username = bot_username.lstrip("@").strip()
+
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT id FROM source_channels WHERE username = ?",
+                (source_username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            source_id = row["id"]
+
+            cur = self.conn.execute(
+                "DELETE FROM source_destinations WHERE source_id = ? AND bot_username = ?",
+                (source_id, bot_username),
+            )
+            self.conn.commit()
+            removed = cur.rowcount > 0
+            if removed:
+                logger.info(
+                    "Dest removed for @%s: @%s", source_username, bot_username
+                )
+            return removed
+
+    def get_source_dests(self, source_username: str) -> list[str]:
+        """Get all bot destinations for a source channel. Returns empty list if none."""
+        source_username = source_username.lstrip("@").strip()
+
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT id FROM source_channels WHERE username = ?",
+                (source_username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return []
+            source_id = row["id"]
+
+            cur = self.conn.execute(
+                "SELECT bot_username FROM source_destinations WHERE source_id = ? ORDER BY id",
+                (source_id,),
+            )
+            return [row["bot_username"] for row in cur.fetchall()]
+
+    def clear_source_dests(self, source_username: str) -> int:
+        """Remove all bot destinations for a source. Returns count removed."""
+        source_username = source_username.lstrip("@").strip()
+
+        with self._lock:
+            cur = self.conn.execute(
+                "SELECT id FROM source_channels WHERE username = ?",
+                (source_username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return 0
+            source_id = row["id"]
+
+            cur = self.conn.execute(
+                "DELETE FROM source_destinations WHERE source_id = ?",
+                (source_id,),
+            )
+            self.conn.commit()
+            removed = cur.rowcount
+            if removed:
+                logger.info(
+                    "Cleared %d dests for @%s", removed, source_username
+                )
+            return removed
 
     # ──────────────────────────────────────────────
     #  Destination

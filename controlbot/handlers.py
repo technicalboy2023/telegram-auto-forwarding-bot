@@ -69,7 +69,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     """Handler: /add_source @channel [@destinationBot]
 
     With one arg  → adds source, posts will use the global /set_dest bot.
-    With two args → adds source with an EXCLUSIVE destination (per-source mapping).
+    With two args → adds source with a destination (per-source mapping).
     """
     if not await _admin_only(update):
         return
@@ -80,7 +80,7 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             "❌ Usage:\n"
             "  `/add_source @channel` — use global /set_dest bot\n"
-            "  `/add_source @channel @destinationBot` — exclusive mapping\n\n"
+            "  `/add_source @channel @destinationBot` — set destination\n\n"
             "Examples:\n"
             "  `/add_source @DealsChannel`\n"
             "  `/add_source @DealsChannel @CueLinksBot`\n",
@@ -89,18 +89,16 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     username = args[0].lstrip("@").strip()
     dest = args[1].lstrip("@").strip() if len(args) >= 2 else None
-    if dest:
-        # Basic validation: bot usernames typically end with 'bot' but not required.
-        if not dest:
-            await update.message.reply_text("❌ Destination bot username cannot be empty.")
-            return
+    if dest and not dest:
+        await update.message.reply_text("❌ Destination bot username cannot be empty.")
+        return
 
     if db.add_source(username, dest=dest):
         if dest:
             await update.message.reply_text(
                 f"✅ Source channel `@{username}` added!\n"
-                f"📡 Exclusive forwarding: `@{username}` → `@{dest}`\n"
-                f"Other destinations will NOT receive posts from this source.",
+                f"📡 Forwarding to `@{dest}`.\n"
+                f"Use `/add_dest @{username} @Bot2` to add more destinations.",
             )
         else:
             await update.message.reply_text(
@@ -110,7 +108,8 @@ async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     else:
         await update.message.reply_text(
             f"⚠️ `@{username}` is already in your source list.\n"
-            f"Use `/set_source_dest @{username} @Bot` to change its destination.",
+            f"Use `/set_source_dest @{username} @Bot` to change its destination "
+            f"or `/add_dest @{username} @Bot` to add more destinations.",
         )
 
 
@@ -178,6 +177,135 @@ async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"⚠️ `@{username}` not found in source list.")
 
 
+async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler: /add_dest @Channel @Bot — add a bot to source's multi-dest list."""
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "❌ Usage: `/add_dest @channel @bot`\n\n"
+            "Add another bot destination for a source channel.\n"
+            "The source's posts will be forwarded to ALL bots in its destination list.\n\n"
+            "Examples:\n"
+            "  `/add_dest @technicalgeardeals @cuelinks_bot`\n"
+            "  `/add_dest @technicalgeardeals @sankmo_bot`\n"
+            "  `/list_dests @technicalgeardeals` — view all destinations",
+        )
+        return
+
+    source = args[0].lstrip("@").strip()
+    bot = args[1].lstrip("@").strip()
+
+    if not source or not bot:
+        await update.message.reply_text("❌ Both channel and bot usernames are required.")
+        return
+
+    if db.add_source_dest(source, bot):
+        await update.message.reply_text(
+            f"✅ Added `@{bot}` to `@{source}`'s destination list.\n"
+            f"Use `/list_dests @{source}` to see all destinations.",
+        )
+    else:
+        # Try to give a helpful error message
+        sources = db.get_all_sources()
+        found = any(s["username"] == source for s in sources)
+        if not found:
+            await update.message.reply_text(
+                f"⚠️ Source `@{source}` not found. Add it first with `/add_source @{source}`.",
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ `@{bot}` is already in `@{source}`'s destination list "
+                f"or source not found.\nUse `/list_dests @{source}` to check.",
+            )
+
+
+async def remove_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler: /remove_dest @Channel @Bot — remove a bot from source's dest list."""
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text(
+            "❌ Usage: `/remove_dest @channel @bot`\n\n"
+            "Remove a bot from a source's destination list.\n\n"
+            "Example:\n"
+            "  `/remove_dest @technicalgeardeals @sankmo_bot`",
+        )
+        return
+
+    source = args[0].lstrip("@").strip()
+    bot = args[1].lstrip("@").strip()
+
+    if db.remove_source_dest(source, bot):
+        await update.message.reply_text(
+            f"🗑️ Removed `@{bot}` from `@{source}`'s destination list.\n"
+            f"Use `/list_dests @{source}` to see remaining destinations.",
+        )
+    else:
+        await update.message.reply_text(
+            f"⚠️ Could not remove. Check that `@{source}` exists and "
+            f"`@{bot}` is in its destination list.",
+        )
+
+
+async def list_dests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handler: /list_dests @Channel — show all dests for a source."""
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Usage: `/list_dests @channel`\n\n"
+            "Show all destination bots for a source channel.\n"
+            "Example: `/list_dests @technicalgeardeals`\n"
+            "\n"
+            "Tip: Use `/list_sources` to see all sources and their destinations.",
+        )
+        return
+
+    source = args[0].lstrip("@").strip()
+
+    # Check if source exists
+    sources = db.get_all_sources()
+    src_info = next((s for s in sources if s["username"] == source), None)
+    if not src_info:
+        await update.message.reply_text(
+            f"⚠️ Source `@{source}` not found.\nUse `/list_sources` to see all sources.",
+        )
+        return
+
+    dests = db.get_source_dests(source)
+    fallback = src_info.get("destination")
+    global_dest = db.get_destination()
+
+    lines = [f"📡 <b>Destinations for @{_escape_html(source)}:</b>", ""]
+
+    if dests:
+        for i, d in enumerate(dests, 1):
+            lines.append(f"  {i}. <code>@{_escape_html(d)}</code>")
+    else:
+        lines.append("  <i>No multi-destination list set.</i>")
+
+    lines.append("")
+    if fallback:
+        lines.append(f"<i>Single dest column:</i> <code>@{_escape_html(fallback)}</code>")
+    if global_dest:
+        lines.append(f"<i>Global default:</i> <code>@{_escape_html(global_dest)}</code>")
+
+    lines.append("")
+    lines.append("<i>Use <code>/add_dest @Channel @Bot</code> to add more.</i>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handler: /list_sources"""
     if not await _admin_only(update):
@@ -192,23 +320,29 @@ async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    # Build message line-by-line using HTML escaping for safe dynamic content.
-    # MarkdownV2 is too brittle — dates like "2026-07-06" contain hyphens that
-    # need careful escaping. HTML mode is much more forgiving.
     lines = ["📡 <b>Source Channels & Their Destinations:</b>", ""]
     for i, s in enumerate(sources, 1):
         username = _escape_html(s["username"])
         added_at = _escape_html(s["added_at"])
+
+        # Check multi-dest first
+        dests = db.get_source_dests(s["username"])
         per_source_dest = s.get("destination")
-        if per_source_dest:
-            dest_html = f"→ <code>@{_escape_html(per_source_dest)}</code> (exclusive)"
+
+        if dests:
+            bots = ", ".join(f"<code>@{_escape_html(d)}</code>" for d in dests)
+            dest_html = f"→ {bots}"
+        elif per_source_dest:
+            dest_html = f"→ <code>@{_escape_html(per_source_dest)}</code> (single)"
         else:
-            dest_html = f"→ <i>global</i> <code>@{_escape_html(db.get_destination() or 'NOT SET')}</code>"
+            global_dest = db.get_destination() or "NOT SET"
+            dest_html = f"→ <i>global</i> <code>@{_escape_html(global_dest)}</code>"
+
         lines.append(f"  {i}. <code>@{username}</code> {dest_html}")
         lines.append(f"     <i>added {added_at}</i>")
 
     lines.append("")
-    lines.append("<i>Use <code>/set_source_dest @Channel @Bot</code> to set an exclusive destination.</i>")
+    lines.append("<i>Use <code>/add_dest @Channel @Bot</code> to add more destinations.</i>")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -653,6 +787,11 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  `/set_footer Text` — Add footer\n"
         "  `/clear_header` — Remove header\n"
         "  `/clear_footer` — Remove footer\n\n"
+        "🎯 *Multi-Destination:*\n"
+        "  `/add_dest @channel @bot` — Add another destination bot\n"
+        "  `/remove_dest @channel @bot` — Remove destination bot\n"
+        "  `/list_dests @channel` — View all destinations of a source\n"
+        "  `/set_source_dest @channel @bot` — Set/change single destination\n\n"
         "⚙️ *Control:*\n"
         "  `/status` — Current status\n"
         "  `/pause` — Pause forwarding\n"

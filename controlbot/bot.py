@@ -22,6 +22,9 @@ logger = get_logger(__name__)
 
 from controlbot.handlers import (
     add_source,
+    add_dest,
+    remove_dest,
+    list_dests,
     remove_source,
     list_sources,
     set_source_dest,
@@ -77,6 +80,9 @@ def build_application(db: Database) -> Application:
 
     # Source management
     _add_handler(app, "add_source", add_source)
+    _add_handler(app, "add_dest", add_dest)
+    _add_handler(app, "remove_dest", remove_dest)
+    _add_handler(app, "list_dests", list_dests)
     _add_handler(app, "remove_source", remove_source)
     _add_handler(app, "list_sources", list_sources)
     _add_handler(app, "set_source_dest", set_source_dest)
@@ -116,7 +122,7 @@ def build_application(db: Database) -> Application:
     # and the user never gets a reply. This guarantees the admin sees an error.
     app.add_error_handler(_on_ptb_error)
 
-    logger.info("Control bot handlers registered (%d commands)", 22)
+    logger.info("Control bot handlers registered (%d commands)", 25)
 
     return app
 
