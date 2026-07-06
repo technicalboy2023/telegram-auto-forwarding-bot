@@ -1,0 +1,45 @@
+============================================================================
+  ALWAYSDATA SERVER COMMANDS — Copy-paste these one by one
+============================================================================
+
+--- STEP 1: SSH into server ---
+ssh amna@ssh1.alwaysdata.net
+
+
+--- STEP 2: Pull latest bug fix ---
+cd ~/www/bot
+git pull origin main
+
+
+--- STEP 3: Test the bot (optional, verify /start works) ---
+cd ~/www/bot
+source venv/bin/activate
+python3 bot.py
+(Press Ctrl+C after testing /start command from Telegram)
+
+
+--- STEP 4: Create 24/7 Service ---
+Go to: https://admin.alwaysdata.com/ → Login → Services → Add a service
+
+Fill these fields:
+  Name:        telegram-forwarder
+  Command:     /home/amna/www/bot/venv/bin/python3 /home/amna/www/bot/bot.py
+  Directory:   /home/amna/www/bot
+  Environment: LOW_RAM=true
+
+Click Save → Click START ▶️
+
+
+--- STEP 5: Check logs ---
+tail -f ~/www/bot/logs/bot.log
+(Press Ctrl+C to exit logs)
+
+
+--- STEP 6: Test from Telegram ---
+Send these to your control bot:
+  /start
+  /status
+
+============================================================================
+  DONE! Bot is now running 24/7 on Alwaysdata
+============================================================================
