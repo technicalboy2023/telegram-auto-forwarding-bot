@@ -290,29 +290,41 @@ class UserbotEngine:
         original_message,
         processed_caption: Optional[str],
     ) -> None:
-        """Send a single message/media to the destination entity."""
+        """Send a single message/media to the destination entity.
+
+        Telethon v1.x does not support a native timeout parameter on
+        send_message / send_file, so we wrap each call in
+        asyncio.wait_for to prevent the bot from hanging forever
+        when Telegram's API is slow or unresponsive.
+        """
         TELEGRAM_TIMEOUT = 30  # seconds — prevents bot freeze on slow API
         media = original_message.media
 
         if media and isinstance(media, MessageMediaPhoto):
-            await self.client.send_file(
-                dest_entity,
-                media.photo,
-                caption=processed_caption or "",
+            await asyncio.wait_for(
+                self.client.send_file(
+                    dest_entity,
+                    media.photo,
+                    caption=processed_caption or "",
+                ),
                 timeout=TELEGRAM_TIMEOUT,
             )
         elif media and isinstance(media, MessageMediaDocument):
-            await self.client.send_file(
-                dest_entity,
-                media.document,
-                caption=processed_caption or "",
+            await asyncio.wait_for(
+                self.client.send_file(
+                    dest_entity,
+                    media.document,
+                    caption=processed_caption or "",
+                ),
                 timeout=TELEGRAM_TIMEOUT,
             )
         else:
             if processed_caption:
-                await self.client.send_message(
-                    dest_entity,
-                    processed_caption,
+                await asyncio.wait_for(
+                    self.client.send_message(
+                        dest_entity,
+                        processed_caption,
+                    ),
                     timeout=TELEGRAM_TIMEOUT,
                 )
 
