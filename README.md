@@ -669,7 +669,7 @@ prevent unbounded growth of history tables. Cleanup runs **automatically**
 
 | Target | Action | Default Retention |
 |--------|--------|-------------------|
-| `forward_history` rows older than 30 days | DELETE + VACUUM | `HISTORY_RETENTION_DAYS=30` |
+| `forward_history` and duplicate hashes older than 7 days | DELETE + VACUUM | `HISTORY_RETENTION_DAYS=7` |
 | `__pycache__/` directories | Remove with `shutil.rmtree` | Always |
 | Stray `*.pyc` files | Remove with `os.unlink` | Always |
 | Orphaned log files in `logs/` | Remove if older than 7 days | `LOG_RETENTION_DAYS=7` |
@@ -724,19 +724,25 @@ INFO  telegram_bot  Auto-cleanup: (nothing to clean)
 If a line contains `errors=[...]`, paste it back to the developer — the
 bot logs error details per-stage and continues with other stages.
 
-### Force an Immediate Cleanup
+### Force an Immediate Cleanup (Manual Test)
+
+You can manually trigger the cleanup scanner and view the summary without stopping the bot:
 
 ```bash
 cd ~/www/bot
 source venv/bin/activate
-python3 -c "from utils.cleanup import CleanupScheduler; from database.db import Database; db=Database(); r=CleanupScheduler(db).run_full_cleanup(); print(r.summary()); print('errors:', r.errors)"
+python3 test_cleanup.py
 ```
 
 Output:
 
 ```
-pycache=2d/0f
-errors: []
+==================================================
+🧹 STARTING MANUAL CLEANUP TEST
+==================================================
+✅ CLEANUP FINISHED!
+📊 SUMMARY: vacuumed, pycache=2d/0f
+==================================================
 ```
 
 ### Configuration (Env Vars — Optional)
@@ -791,6 +797,24 @@ pkill -9 -f "bot.py"
 | **2FA enabled** | Bot will ask for password on first login |
 | **"/home/user/www/bot doesnt exist"** | Working directory should be `www/bot` not full path |
 | **Conflict: terminated by other getUpdates** | Two bot instances running — kill one with `pkill -9 -f bot.py` |
+
+### 🔄 How to Logout / Change Telegram Account
+
+If you want to log out and use a different Telegram number:
+
+1. **Stop the Bot:** Go to Alwaysdata Admin Panel → Services → click the Pause/Stop button.
+2. **Delete Session File:** In your SSH terminal, run:
+   ```bash
+   cd ~/www/bot
+   rm -f userbot_session.session userbot_session.session-journal
+   ```
+3. **Login Again:**
+   ```bash
+   source venv/bin/activate
+   python3 login.py
+   ```
+   *Enter your new phone number and OTP.*
+4. **Restart the Bot:** Go back to Alwaysdata Admin Panel → Services → click the Play (Start) button.
 
 ### Check Logs
 
