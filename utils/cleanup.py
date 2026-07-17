@@ -44,8 +44,10 @@ logger = get_logger(__name__)
 #  Configuration (env-overridable; sane defaults for LOW_RAM environments)
 # ════════════════════════════════════════════════════════════════════════════
 
-HISTORY_RETENTION_DAYS: int = int(os.environ.get("HISTORY_RETENTION_DAYS", "30"))
-LOG_RETENTION_DAYS: int = int(os.environ.get("LOG_RETENTION_DAYS", "7"))
+HISTORY_RETENTION_DAYS: int = int(os.environ.get("HISTORY_RETENTION_DAYS", "7"))  # Keep only 7 days of DB history
+LOG_RETENTION_DAYS: int = int(os.environ.get("LOG_RETENTION_DAYS", "7"))      # Keep only 7 days of logs
+# Note: We run the scanner every 24 hours, but it only deletes data older than 7 days.
+# This prevents the issue where a server restart resets a 7-day timer.
 CLEANUP_INTERVAL_HOURS: int = int(os.environ.get("CLEANUP_INTERVAL_HOURS", "24"))
 _no_cleanup_raw = os.environ.get("NO_CLEANUP", "").strip().lower()
 DISABLE_CLEANUP: bool = _no_cleanup_raw not in ("", "0", "false", "no")
