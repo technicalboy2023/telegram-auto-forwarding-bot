@@ -168,6 +168,7 @@ def main():
             logger.info("Userbot (Telethon) starting...")
             try:
                 await userbot.start()
+                await userbot.client.run_until_disconnected()
             except asyncio.CancelledError:
                 # Auto-restart or shutdown trigger — disconnect cleanly so the
                 # MTProto session file is not corrupted on disk.
