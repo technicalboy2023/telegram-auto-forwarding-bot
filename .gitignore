@@ -1,36 +1,57 @@
-# Sensitive config — DO NOT COMMIT
+# ────────────────────────────────────────────────────────────
+# 🔐 Sensitive Config & Credentials (DO NOT COMMIT)
+# ────────────────────────────────────────────────────────────
 config.json
 .env
 
-# Database (contains user data)
+# ────────────────────────────────────────────────────────────
+# 💾 Database & Telethon Sessions
+# ────────────────────────────────────────────────────────────
+# SQLite Database (contains user data and routes)
 bot_data.db
+bot_data.db-wal
+bot_data.db-shm
+bot_data.db-journal
 
-# Telethon session (personal login)
+# Telethon MTProto Session Files (contains personal login token)
 *.session
+*.session-journal
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-
-# Virtual environment
-venv/
-.venv/
-env/
-
-# Logs
+# ────────────────────────────────────────────────────────────
+# 📊 Logs
+# ────────────────────────────────────────────────────────────
 logs/
 *.log
 
-# IDE
+# ────────────────────────────────────────────────────────────
+# 🐍 Python / Environment
+# ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+venv/
+.venv/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ────────────────────────────────────────────────────────────
+# 🛠️ IDE & OS Files
+# ────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Deploy scripts (local use only)
+# ────────────────────────────────────────────────────────────
+# 🚀 Deployment / Scratch Files
+# ────────────────────────────────────────────────────────────
 deploy/
+*.tmp
+*.bak

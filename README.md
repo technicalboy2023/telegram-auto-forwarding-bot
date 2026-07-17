@@ -163,16 +163,15 @@ Paste this with YOUR real values:
 ```bash
 cd ~/www/bot
 source venv/bin/activate
-python3 bot.py
+python3 login.py
 ```
 
-1. Phone number confirm hoga
+1. Enter your phone number
 2. **Telegram se OTP aayega apke phone pe**
-3. OTP enter karo
-4. `Logged in successfully` dikhega
-5. **Ctrl+C** se stop karo
+3. OTP enter karo (and 2FA password if enabled)
+4. `Login Successful!` dikhega
 
-> ✅ Session file save ho jayegi — agli baar direct login hoga!
+> ✅ Session file save ho jayegi — agli baar se bot automatically run hoga!
 
 ### Step 6: Create 24/7 Service
 
@@ -345,20 +344,12 @@ Even if you have a 3rd bot `@xyz_bot` added in your account, it will **NEVER** r
 
 ### Setup
 
-**Option 1: Atomic add (cleanest)** — `/add_source` accepts an optional 2nd argument for the destination bot:
-
-```
-/add_source @technicalgeardeals @cuelinks_bot
-/add_source @btrickdeals @sankmo_bot
-```
-
-**Option 2: Add first, then map** — useful if you already have sources added:
+**Link a source to a destination** — use `/link_source`:
 
 ```
 /add_source @technicalgeardeals
-/add_source @btrickdeals
-/set_source_dest @technicalgeardeals @cuelinks_bot
-/set_source_dest @btrickdeals @sankmo_bot
+/add_dest @cuelinks_bot
+/link_source @technicalgeardeals @cuelinks_bot
 ```
 
 ### Verify Routing
@@ -370,21 +361,20 @@ Even if you have a 3rd bot `@xyz_bot` added in your account, it will **NEVER** r
 Reply shows each source + its destination:
 
 ```
-📡 Source Channels & Their Destinations:
+📡 Monitored Sources:
 
-  1. @technicalgeardeals → @cuelinks_bot (exclusive)
-     added 2026-07-06 13:24:58
-  2. @btrickdeals → @sankmo_bot (exclusive)
-     added 2026-07-06 13:25:53
-
-Use /set_source_dest @Channel @Bot to set an exclusive destination.
+🔸 @technicalgeardeals
+   Identifier: @technicalgeardeals
+   Type: channel
+   Routes: @cuelinks_bot
 ```
 
 ### Change Or Clear A Mapping
 
 ```
-/set_source_dest @technicalgeardeals @newBot        # change to a new bot
-/set_source_dest @technicalgeardeals default         # clear (will use global /set_dest)
+/link_source @technicalgeardeals @newBot        # link to a new bot
+/unlink_source @technicalgeardeals @cuelinks_bot # remove link
+/unlink_source @technicalgeardeals all           # remove all links for source
 ```
 
 ### Fallback Chain
@@ -392,7 +382,7 @@ Use /set_source_dest @Channel @Bot to set an exclusive destination.
 For each new post from a source, the bot looks up the destination in this order:
 
 ```
-1. PER-SOURCE destination (if /set_source_dest was used)
+1. PER-SOURCE routes (if /link_source was used)
        ↓ if not set
 2. GLOBAL /set_dest bot
        ↓ if not set
@@ -404,12 +394,12 @@ For each new post from a source, the bot looks up the destination in this order:
 
 | File | Change |
 |------|--------|
-| `database/db.py` | `source_channels.destination` column added (NULL = use global) |
-| `controlbot/handlers.py` | `/add_source` accepts optional 2nd arg; new `/set_source_dest` command; `/list_sources` shows per-source mapping |
-| `userbot/engine.py` | Forwarding engine reads `source.destination` first, falls back to `db.get_destination()` |
-| `controlbot/bot.py` | New `/set_source_dest` command registered (22 commands total) |
+| `database/db.py` | `routes` table maps sources to destinations |
+| `controlbot/handlers.py` | New `/link_source` and `/unlink_source` commands |
+| `userbot/engine.py` | Forwarding engine reads routes first, falls back to default dest |
+| `controlbot/bot.py` | New commands registered (28 commands total) |
 
-**Backward compatible**: existing setups (with global `/set_dest` and no per-source mapping) keep working without changes. On first bot start, the migration adds the new column automatically.
+**Backward compatible**: existing setups (with global `/set_dest`) keep working without changes. On first bot start, the migration adds the new schema automatically.
 
 ---
 
@@ -522,7 +512,10 @@ pip install -r requirements.txt
 # Create config.json (see Step 4 above)
 nano config.json
 
-# Run
+# Login First
+python3 login.py
+
+# Run Bot
 python3 bot.py
 ```
 
@@ -534,18 +527,22 @@ python3 bot.py
 
 | Command | What It Does |
 |---------|-------------|
-| `/add_source @channel` | Add source channel to monitor (uses global destination) |
-| `/add_source @channel @bot` | Add source with EXCLUSIVE destination bot |
-| `/set_source_dest @channel @bot` | Set/change a source's exclusive destination |
-| `/remove_source @channel` | Stop monitoring a channel |
-| `/list_sources` | Show all sources + their per-source destinations |
+| `/add_source @channel/ID` | Add source channel to monitor |
+| `/remove_source @channel/ID` | Stop monitoring a channel |
+| `/list_sources` | Show all sources + their routes |
+| `/link_source @src @dest` | Link a source to a specific destination bot |
+| `/unlink_source @src @dest` | Remove a routing link |
 
 ### Destination
 
 | Command | What It Does |
 |---------|-------------|
-| `/set_dest @BotUsername` | Set where posts get forwarded |
-| `/show_dest` | Show current destination bot |
+| `/add_dest @BotUsername` | Add a destination bot |
+| `/remove_dest @BotUsername` | Remove a destination bot |
+| `/list_dests` | List all registered destination bots |
+| `/set_dest @BotUsername` | Set global default destination |
+| `/show_dest` | Show global default destination |
+| `/clear_dest` | Clear global default destination |
 
 ### Word Replacement
 
@@ -612,11 +609,8 @@ telegram-auto-forwarding-bot/
 │
 ├── requirements.txt          # 📦 Dependencies
 ├── .gitignore                # 🙈 Excludes sensitive files
-├── .env.example              # 📋 Environment template
-├── README.md                 # 📖 You're reading it!
-├── setup_guide.md            # 📚 Hindi + English detailed guide
-├── ALL_IN_ONE.sh             # 🔧 Server fix & diagnostic tool
-└── SETUP_COMMANDS.txt        # 📋 Quick reference commands
+├── config.example.json       # 📋 Config template
+└── README.md                 # 📖 You're reading it!
 ```
 
 ---
@@ -691,7 +685,7 @@ A hard-coded exclusion list **prohibits deletion of**:
 
 - `bot_data.db` and SQLite WAL/SHM files
 - `userbot_session.session` and Telethon session journal
-- `config.json`, `.env`, `.env.example`
+- `config.json` and `config.example.json`
 - The active `bot.log` and its `RotatingFileHandler` backups
 - `venv/`, `.venv/`, `.git/`, `site-packages/` directories
 
@@ -789,7 +783,7 @@ pkill -9 -f "bot.py"
 |---------|----------|
 | **Bot not forwarding** | Check `/status` — source + destination set? `/pause` off? |
 | **Service dies after 4 sec** | Monitoring command must be `/bin/true` in Service settings |
-| **Session expired** | Delete `userbot_session.session` and re-run `python3 bot.py` |
+| **Session expired** | Delete `userbot_session.session` and re-run `python3 login.py` |
 | **OOM killed (256MB)** | Reduce number of source channels, increase delay via `/set_delay 5` |
 | **Control bot ignoring me** | Check `admin_id` in config.json matches YOUR Telegram ID |
 | **Source posts not detected** | Your account must be a MEMBER of the source channel |

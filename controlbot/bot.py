@@ -9,7 +9,7 @@ admin_id can use the bot.
 import json
 from pathlib import Path
 
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -18,18 +18,21 @@ from telegram.ext import (
 )
 
 from utils.logger import get_logger
+
 logger = get_logger(__name__)
 
 from controlbot.handlers import (
     add_source,
+    remove_source,
+    list_sources,
+    link_source,
+    unlink_source,
     add_dest,
     remove_dest,
     list_dests,
-    remove_source,
-    list_sources,
-    set_source_dest,
     set_dest,
     show_dest,
+    clear_dest,
     add_replace,
     remove_replace,
     list_replaces,
@@ -58,6 +61,42 @@ logger = get_logger(__name__)
 CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
 
+async def _register_commands(app: Application) -> None:
+    """Register all bot commands with Telegram for auto-suggest menu."""
+    commands = [
+        BotCommand("start", "🚀 Start & show all commands"),
+        BotCommand("help", "📖 Show help & all commands"),
+        BotCommand("add_source", "📡 Add source (@user/ID/link)"),
+        BotCommand("remove_source", "🗑️ Remove a source"),
+        BotCommand("list_sources", "📋 List all sources & routes"),
+        BotCommand("add_dest", "🎯 Add a new destination"),
+        BotCommand("remove_dest", "🗑️ Remove a destination"),
+        BotCommand("list_dests", "📋 Show all destinations"),
+        BotCommand("link_source", "🔗 Link source to a destination"),
+        BotCommand("unlink_source", "➖ Unlink source from a destination"),
+        BotCommand("set_dest", "⭐ Set global default destination"),
+        BotCommand("show_dest", "👁️ Show global destination"),
+        BotCommand("clear_dest", "🗑️ Clear global destination"),
+        BotCommand("add_replace", "✂️ Add word replacement rule"),
+        BotCommand("remove_replace", "🗑️ Remove a replacement rule"),
+        BotCommand("list_replaces", "📋 List all replacements"),
+        BotCommand("add_block", "🚫 Block posts with a word"),
+        BotCommand("remove_block", "🗑️ Remove block rule"),
+        BotCommand("list_blocks", "📋 List blocked words"),
+        BotCommand("set_header", "📌 Set header text"),
+        BotCommand("set_footer", "📌 Set footer text"),
+        BotCommand("clear_header", "🗑️ Remove header"),
+        BotCommand("clear_footer", "🗑️ Remove footer"),
+        BotCommand("status", "📊 Bot status dashboard"),
+        BotCommand("pause", "⏸️ Pause forwarding"),
+        BotCommand("resume", "▶️ Resume forwarding"),
+        BotCommand("stats", "📈 Statistics & recent activity"),
+        BotCommand("set_delay", "⏱️ Set forward delay (seconds)"),
+    ]
+    await app.bot.set_my_commands(commands)
+    logger.info("Registered %d commands with Telegram.", len(commands))
+
+
 def build_application(db: Database) -> Application:
     """
     Build and return a configured PTB Application instance.
@@ -70,7 +109,7 @@ def build_application(db: Database) -> Application:
 
     token = cfg["bot_token"]
 
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_register_commands).build()
 
     # Inject DB into bot_data so handlers can access it
     app.bot_data["db"] = db
@@ -81,16 +120,20 @@ def build_application(db: Database) -> Application:
 
     # Source management
     _add_handler(app, "add_source", add_source)
+    _add_handler(app, "remove_source", remove_source)
+    _add_handler(app, "list_sources", list_sources)
+
+    # Destination management
     _add_handler(app, "add_dest", add_dest)
     _add_handler(app, "remove_dest", remove_dest)
     _add_handler(app, "list_dests", list_dests)
-    _add_handler(app, "remove_source", remove_source)
-    _add_handler(app, "list_sources", list_sources)
-    _add_handler(app, "set_source_dest", set_source_dest)
-
-    # Destination management
     _add_handler(app, "set_dest", set_dest)
     _add_handler(app, "show_dest", show_dest)
+    _add_handler(app, "clear_dest", clear_dest)
+
+    # Routing
+    _add_handler(app, "link_source", link_source)
+    _add_handler(app, "unlink_source", unlink_source)
 
     # Replace rules
     _add_handler(app, "add_replace", add_replace)
@@ -119,11 +162,9 @@ def build_application(db: Database) -> Application:
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     # ── Global error handler ──
-    # Without this, any exception in a command handler is silently swallowed
-    # and the user never gets a reply. This guarantees the admin sees an error.
     app.add_error_handler(_on_ptb_error)
 
-    logger.info("Control bot handlers registered (%d commands)", 25)
+    logger.info("Control bot handlers registered")
 
     return app
 
@@ -136,12 +177,15 @@ async def _on_ptb_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error("Unhandled exception in PTB handler:", exc_info=context.error)
 
     try:
-        admin_id = _get_admin_id()
         chat_id = None
         if isinstance(update, Update) and update.effective_chat:
             chat_id = update.effective_chat.id
         elif isinstance(update, Update) and update.callback_query:
-            chat_id = update.callback_query.message.chat_id if update.callback_query.message else None
+            chat_id = (
+                update.callback_query.message.chat_id
+                if update.callback_query.message
+                else None
+            )
 
         if chat_id is not None:
             await context.bot.send_message(

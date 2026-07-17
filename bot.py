@@ -26,7 +26,7 @@ from pathlib import Path
 from userbot.engine import UserbotEngine
 from controlbot.bot import build_application
 from database.db import Database
-from utils.logger import setup_logging, get_logger
+from utils.logger import setup_logging
 from utils.cleanup import CleanupScheduler
 
 CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -42,7 +42,7 @@ def load_config() -> dict:
 
 def validate_config(cfg: dict) -> bool:
     """Validate that all required config fields are present and non-placeholder."""
-    required = ["api_id", "api_hash", "phone", "bot_token", "admin_id"]
+    required = ["api_id", "api_hash", "bot_token", "admin_id"]
 
     missing = [k for k in required if k not in cfg]
     if missing:
@@ -132,7 +132,10 @@ def main():
             if RESTART_HOURS <= 0:
                 return
             await asyncio.sleep(RESTART_HOURS * 3600)
-            logger.warning("Auto-restart triggered (%dh). Exiting for clean restart...", RESTART_HOURS)
+            logger.warning(
+                "Auto-restart triggered (%dh). Exiting for clean restart...",
+                RESTART_HOURS,
+            )
             shutdown_event.set()
 
         # ── Periodic disk & history cleanup (every CLEANUP_INTERVAL_HOURS, default 24) ──

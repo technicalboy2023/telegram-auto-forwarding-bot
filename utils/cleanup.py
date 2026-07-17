@@ -23,6 +23,7 @@ Each cleanup step is wrapped in try/except so a single failure cannot
 prevent later steps from running, and asyncio.CancelledError is
 re-raised cleanly so shutdown is graceful.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -59,32 +60,36 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 # ════════════════════════════════════════════════════════════════════════════
 
 # File names that must never be deleted
-PROTECTED_FILE_NAMES: frozenset[str] = frozenset({
-    "bot_data.db",
-    "bot_data.db-wal",
-    "bot_data.db-shm",
-    "userbot_session.session",
-    "userbot_session.session-journal",
-    "config.json",
-    ".env",
-    ".env.example",
-    ".gitignore",
-    # currently active log + RotatingFileHandler-managed backups
-    "bot.log",
-    "bot.log.1",
-    "bot.log.2",
-    "bot.log.3",
-    "bot.log.4",
-    "bot.log.5",
-})
+PROTECTED_FILE_NAMES: frozenset[str] = frozenset(
+    {
+        "bot_data.db",
+        "bot_data.db-wal",
+        "bot_data.db-shm",
+        "userbot_session.session",
+        "userbot_session.session-journal",
+        "config.json",
+        ".env",
+        ".env.example",
+        ".gitignore",
+        # currently active log + RotatingFileHandler-managed backups
+        "bot.log",
+        "bot.log.1",
+        "bot.log.2",
+        "bot.log.3",
+        "bot.log.4",
+        "bot.log.5",
+    }
+)
 
 # Directory names that must never be touched (neither removed nor descended into)
-PROTECTED_DIR_NAMES: frozenset[str] = frozenset({
-    ".git",
-    "venv",
-    ".venv",
-    "site-packages",
-})
+PROTECTED_DIR_NAMES: frozenset[str] = frozenset(
+    {
+        ".git",
+        "venv",
+        ".venv",
+        "site-packages",
+    }
+)
 
 # File globs considered "temp / auto-generated" — safe to delete if matched
 TEMP_FILE_PATTERNS: tuple[str, ...] = (
@@ -99,6 +104,7 @@ TEMP_FILE_PATTERNS: tuple[str, ...] = (
 # ════════════════════════════════════════════════════════════════════════════
 #  Cleanup report
 # ════════════════════════════════════════════════════════════════════════════
+
 
 @dataclass
 class CleanupReport:
@@ -123,7 +129,9 @@ class CleanupReport:
         if self.db_vacuumed:
             parts.append("vacuumed")
         if self.pycache_dirs_removed or self.pyc_files_removed:
-            parts.append(f"pycache={self.pycache_dirs_removed}d/{self.pyc_files_removed}f")
+            parts.append(
+                f"pycache={self.pycache_dirs_removed}d/{self.pyc_files_removed}f"
+            )
         if self.orphan_logs_removed:
             parts.append(f"orphan_logs={self.orphan_logs_removed}")
         if self.temp_files_removed:
@@ -136,6 +144,7 @@ class CleanupReport:
 # ════════════════════════════════════════════════════════════════════════════
 #  Scheduler
 # ════════════════════════════════════════════════════════════════════════════
+
 
 class CleanupScheduler:
     """
@@ -172,7 +181,11 @@ class CleanupScheduler:
         try:
             pruned = self.db.prune_history(HISTORY_RETENTION_DAYS)
             report.history_rows_pruned = pruned
-            if pruned > 0:
+
+            # Clean up dedup window
+            dedup_pruned = self.db.cleanup_dedup_window()
+
+            if pruned > 0 or dedup_pruned > 0:
                 # Only VACUUM when we actually deleted something
                 self.db.vacuum()
                 report.db_vacuumed = True
@@ -220,9 +233,10 @@ class CleanupScheduler:
 
         interval_seconds = CLEANUP_INTERVAL_HOURS * 3600
         logger.info(
-            "Auto-cleanup scheduler running every %d hour(s) "
-            "(history=%dd, logs=%dd).",
-            CLEANUP_INTERVAL_HOURS, HISTORY_RETENTION_DAYS, LOG_RETENTION_DAYS,
+            "Auto-cleanup scheduler running every %d hour(s) (history=%dd, logs=%dd).",
+            CLEANUP_INTERVAL_HOURS,
+            HISTORY_RETENTION_DAYS,
+            LOG_RETENTION_DAYS,
         )
 
         try:
@@ -336,8 +350,12 @@ class CleanupScheduler:
             name = entry.name
             if self._is_protected_file(name):
                 continue
-            if not (name.endswith(".log") or name.endswith(".log.gz") or
-                    name.endswith(".log.1") or name.endswith(".log.2")):
+            if not (
+                name.endswith(".log")
+                or name.endswith(".log.gz")
+                or name.endswith(".log.1")
+                or name.endswith(".log.2")
+            ):
                 # Only target log-shaped files, never random files in logs/.
                 continue
             try:

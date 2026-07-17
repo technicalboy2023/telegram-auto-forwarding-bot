@@ -23,6 +23,7 @@ CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 #  Helpers
 # ────────────────────────────────────────────────────────────
 
+
 def _get_admin_id() -> int:
     with open(CONFIG_PATH, "r") as f:
         return json.load(f)["admin_id"]
@@ -45,602 +46,394 @@ async def _admin_only(update: Update) -> bool:
 
 def _escape_html(text: str) -> str:
     """Escape HTML special characters for safe telegram HTML parse_mode."""
-    return (
-        str(text)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 # ────────────────────────────────────────────────────────────
 #  Source Channel Management
 # ────────────────────────────────────────────────────────────
 
+
 async def add_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /add_source @channel [@destinationBot]
-
-    With one arg  → adds source, posts will use the global /set_dest bot.
-    With two args → adds source with a destination (per-source mapping).
-    """
     if not await _admin_only(update):
         return
+    if not context.args:
+        await update.message.reply_text(
+            "⚠️ Usage: /add_source <@username|ID|InviteLink>"
+        )
+        return
+
+    identifier = context.args[0].strip()
     db: Database = context.bot_data["db"]
 
-    args = context.args
-    if not args:
+    if db.add_source(identifier):
         await update.message.reply_text(
-            "❌ Usage:\n"
-            "  <code>/add_source @channel</code> — use global /set_dest bot\n"
-            "  <code>/add_source @channel @destinationBot</code> — set destination\n\n"
-            "Examples:\n"
-            "  <code>/add_source @DealsChannel</code>\n"
-            "  <code>/add_source @DealsChannel @CueLinksBot</code>",
+            f"✅ <b>Source Added</b>\n\n"
+            f"Identifier: <code>{_escape_html(identifier)}</code>\n\n"
+            f"<i>The bot will try to resolve this entity in the background.</i>",
             parse_mode="HTML",
         )
-        return
-
-    username = args[0].lstrip("@").strip()
-    dest = args[1].lstrip("@").strip() if len(args) >= 2 else None
-    if db.add_source(username, dest=dest):
-        if dest:
-            await update.message.reply_text(
-                f"✅ Source channel <code>@{_escape_html(username)}</code> added!\n"
-                f"📡 Forwarding to <code>@{_escape_html(dest)}</code>.\n"
-                f"Use <code>/add_dest @{_escape_html(username)} @Bot2</code> to add more destinations.",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text(
-                f"✅ Source channel <code>@{_escape_html(username)}</code> added!\n"
-                f"📡 Will forward to the global destination (set via <code>/set_dest @bot</code>).",
-                parse_mode="HTML",
-            )
     else:
-        await update.message.reply_text(
-            f"⚠️ <code>@{_escape_html(username)}</code> is already in your source list.\n"
-            f"Use <code>/set_source_dest @{_escape_html(username)} @Bot</code> to change its destination "
-            f"or <code>/add_dest @{_escape_html(username)} @Bot</code> to add more destinations.",
-            parse_mode="HTML",
-        )
-
-
-async def set_source_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /set_source_dest @channel @Bot (or 'default' to clear)"""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text(
-"❌ Usage: <code>/set_source_dest @channel @Bot</code>\n\n"
-            "Set a per-source EXCLUSIVE destination bot.\n"
-            "Pass <code>default</code> as the bot to clear the mapping (will use global /set_dest).\n\n"
-            "Examples:\n"
-            "  <code>/set_source_dest @technicalgeardeals @CueLinksBot</code>\n"
-            "  <code>/set_source_dest @btrickdeals @SankmoBot</code>\n"
-            "  <code>/set_source_dest @btrickdeals default</code> — clear mapping",
-            parse_mode="HTML",
-        )
-        return
-
-    source = args[0].lstrip("@").strip()
-    dest_raw = args[1].strip()
-
-    if dest_raw.lower() in ("default", "reset", "clear", "none", "-"):
-        dest: str | None = None
-    else:
-        dest = dest_raw.lstrip("@").strip() or None
-
-    if db.set_source_destination(source, dest):
-        if dest:
-            await update.message.reply_text(
-                f"✅ Source <code>@{_escape_html(source)}</code> now forwards EXCLUSIVELY to <code>@{_escape_html(dest)}</code>.\n"
-                f"Other bots will NOT receive posts from this source.",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text(
-                f"✅ Source <code>@{_escape_html(source)}</code> cleared — will now use the global /set_dest bot.",
-                parse_mode="HTML",
-            )
-    else:
-        await update.message.reply_text(
-            f"⚠️ Source <code>@{_escape_html(source)}</code> not found. Add it first with <code>/add_source @{_escape_html(source)}</code>.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("⚠️ This source is already in the list.")
 
 
 async def remove_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /remove_source @channel"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/remove_source @channel</code>\n\n"
-            "Example: <code>/remove_source @DealsChannel</code>",
-            parse_mode="HTML",
-        )
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /remove_source <identifier>")
         return
 
-    username = args[0].lstrip("@").strip()
-    if db.remove_source(username):
+    identifier = context.args[0].strip()
+    db: Database = context.bot_data["db"]
+
+    if db.remove_source(identifier):
         await update.message.reply_text(
-            f"🗑️ Source channel <code>@{_escape_html(username)}</code> removed.",
+            f"✅ Removed source: <code>{_escape_html(identifier)}</code>",
             parse_mode="HTML",
         )
     else:
-        await update.message.reply_text(
-            f"⚠️ <code>@{_escape_html(username)}</code> not found in source list.",
-            parse_mode="HTML",
-        )
-
-
-async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /add_dest @Channel @Bot — add a bot to source's multi-dest list."""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "❌ Usage: <code>/add_dest @channel @bot</code>\n\n"
-            "Add another bot destination for a source channel.\n"
-            "The source's posts will be forwarded to ALL bots in its destination list.\n\n"
-            "Examples:\n"
-            "  <code>/add_dest @technicalgeardeals @cuelinks_bot</code>\n"
-            "  <code>/add_dest @technicalgeardeals @sankmo_bot</code>\n"
-            "  <code>/list_dests @technicalgeardeals</code> — view all destinations",
-            parse_mode="HTML",
-        )
-        return
-
-    source = args[0].lstrip("@").strip()
-    bot = args[1].lstrip("@").strip()
-
-    if not source or not bot:
-        await update.message.reply_text("❌ Both channel and bot usernames are required.")
-        return
-
-    if db.add_source_dest(source, bot):
-        await update.message.reply_text(
-            f"✅ Added <code>@{_escape_html(bot)}</code> to <code>@{_escape_html(source)}</code>'s destination list.\n"
-            f"Use <code>/list_dests @{_escape_html(source)}</code> to see all destinations.",
-            parse_mode="HTML",
-        )
-    else:
-        sources = db.get_all_sources()
-        found = any(s["username"] == source for s in sources)
-        if not found:
-            await update.message.reply_text(
-                f"⚠️ Source <code>@{_escape_html(source)}</code> not found. Add it first with <code>/add_source @{_escape_html(source)}</code>.",
-                parse_mode="HTML",
-            )
-        else:
-            await update.message.reply_text(
-                f"⚠️ <code>@{_escape_html(bot)}</code> is already in <code>@{_escape_html(source)}</code>'s destination list.\n"
-                f"Use <code>/list_dests @{_escape_html(source)}</code> to check.",
-                parse_mode="HTML",
-            )
-
-
-async def remove_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /remove_dest @Channel @Bot — remove a bot from source's dest list."""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text(
-            "❌ Usage: <code>/remove_dest @channel @bot</code>\n\n"
-            "Remove a bot from a source's destination list.\n\n"
-            "Example:\n"
-            "  <code>/remove_dest @technicalgeardeals @sankmo_bot</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    source = args[0].lstrip("@").strip()
-    bot = args[1].lstrip("@").strip()
-
-    if db.remove_source_dest(source, bot):
-        await update.message.reply_text(
-            f"🗑️ Removed <code>@{_escape_html(bot)}</code> from <code>@{_escape_html(source)}</code>'s destination list.\n"
-            f"Use <code>/list_dests @{_escape_html(source)}</code> to see remaining destinations.",
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text(
-            f"⚠️ Could not remove. Check that <code>@{_escape_html(source)}</code> exists and "
-            f"<code>@{_escape_html(bot)}</code> is in its destination list.",
-            parse_mode="HTML",
-        )
-
-
-async def list_dests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /list_dests @Channel — show all dests for a source."""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/list_dests @channel</code>\n\n"
-            "Show all destination bots for a source channel.\n"
-            "Example: <code>/list_dests @technicalgeardeals</code>\n\n"
-            "Tip: Use <code>/list_sources</code> to see all sources and their destinations.",
-            parse_mode="HTML",
-        )
-        return
-
-    source = args[0].lstrip("@").strip()
-
-    # Check if source exists
-    sources = db.get_all_sources()
-    src_info = next((s for s in sources if s["username"] == source), None)
-    if not src_info:
-        await update.message.reply_text(
-            f"⚠️ Source <code>@{_escape_html(source)}</code> not found.\n"
-            f"Use <code>/list_sources</code> to see all sources.",
-            parse_mode="HTML",
-        )
-        return
-
-    dests = db.get_source_dests(source)
-    fallback = src_info.get("destination")
-    global_dest = db.get_destination()
-
-    lines = [f"📡 <b>Destinations for @{_escape_html(source)}:</b>", ""]
-
-    if dests:
-        for i, d in enumerate(dests, 1):
-            lines.append(f"  {i}. <code>@{_escape_html(d)}</code>")
-    else:
-        lines.append("  <i>No multi-destination list set.</i>")
-
-    lines.append("")
-    if fallback:
-        lines.append(f"<i>Single dest column:</i> <code>@{_escape_html(fallback)}</code>")
-    if global_dest:
-        lines.append(f"<i>Global default:</i> <code>@{_escape_html(global_dest)}</code>")
-
-    lines.append("")
-    lines.append("<i>Use <code>/add_dest @Channel @Bot</code> to add more.</i>")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+        await update.message.reply_text("⚠️ Source not found.")
 
 
 async def list_sources(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /list_sources"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
-
     sources = db.get_all_sources()
+
     if not sources:
+        await update.message.reply_text("📭 No source channels are being monitored.")
+        return
+
+    lines = ["📡 <b>Monitored Sources:</b>\n"]
+    for src in sources:
+        title = src["title"] if src["title"] else "Unknown"
+        ident = src["identifier"]
+        lines.append(f"🔸 <b>{_escape_html(title)}</b>")
+        lines.append(f"   Identifier: <code>{_escape_html(ident)}</code>")
+        if src["entity_type"] != "unknown":
+            lines.append(f"   Type: <i>{src['entity_type']}</i>")
+
+        routes = db.get_routes_for_source(src["id"])
+        if routes:
+            r_str = ", ".join(r["identifier"] for r in routes)
+            lines.append(f"   Routes: {r_str}")
+        else:
+            lines.append("   Routes: (Global Default)")
+        lines.append("")
+
+    # Split into chunks if too long
+    msg = "\n".join(lines)
+    for i in range(0, len(msg), 4000):
+        await update.message.reply_text(msg[i : i + 4000], parse_mode="HTML")
+
+
+# ────────────────────────────────────────────────────────────
+#  Destination Management
+# ────────────────────────────────────────────────────────────
+
+
+async def add_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /add_dest <@username|ID>")
+        return
+
+    identifier = context.args[0].strip()
+    db: Database = context.bot_data["db"]
+
+    if db.add_destination(identifier):
         await update.message.reply_text(
-            "📭 No source channels configured.\n"
-            r"Use <code>/add_source @channel</code> to add one.",
+            f"✅ <b>Destination Added:</b> <code>{_escape_html(identifier)}</code>",
             parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text("⚠️ Destination already exists.")
+
+
+async def remove_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /remove_dest <identifier>")
+        return
+
+    identifier = context.args[0].strip()
+    db: Database = context.bot_data["db"]
+
+    if db.remove_destination(identifier):
+        await update.message.reply_text(
+            f"✅ Removed destination: <code>{_escape_html(identifier)}</code>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text("⚠️ Destination not found.")
+
+
+async def list_dests(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+    dests = db.get_all_destinations()
+
+    if not dests:
+        await update.message.reply_text(
+            "📭 No destinations registered. Use /add_dest first."
         )
         return
 
-    lines = ["📡 <b>Source Channels & Their Destinations:</b>", ""]
-    for i, s in enumerate(sources, 1):
-        username = _escape_html(s["username"])
-        added_at = _escape_html(s["added_at"])
-
-        # Check multi-dest first
-        dests = db.get_source_dests(s["username"])
-        per_source_dest = s.get("destination")
-
-        if dests:
-            bots = ", ".join(f"<code>@{_escape_html(d)}</code>" for d in dests)
-            dest_html = f"→ {bots}"
-        elif per_source_dest:
-            dest_html = f"→ <code>@{_escape_html(per_source_dest)}</code> (single)"
-        else:
-            global_dest = db.get_destination() or "NOT SET"
-            dest_html = f"→ <i>global</i> <code>@{_escape_html(global_dest)}</code>"
-
-        lines.append(f"  {i}. <code>@{username}</code> {dest_html}")
-        lines.append(f"     <i>added {added_at}</i>")
-
-    lines.append("")
-    lines.append("<i>Use <code>/add_dest @Channel @Bot</code> to add more destinations.</i>")
+    lines = ["🎯 <b>Registered Destinations:</b>\n"]
+    for dst in dests:
+        title = dst["title"] if dst["title"] else "Unknown"
+        lines.append(
+            f"🔸 <b>{_escape_html(title)}</b> (<code>{_escape_html(dst['identifier'])}</code>) - <i>{dst['entity_type']}</i>"
+        )
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
-# ────────────────────────────────────────────────────────────
-#  Destination Bot Management
-# ────────────────────────────────────────────────────────────
-
 async def set_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /set_dest @BotUsername"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
+    if not context.args:
         await update.message.reply_text(
-            "❌ Usage: <code>/set_dest @BotUsername</code>\n\n"
-            "Example: <code>/set_dest @CueLinksBot</code>",
-            parse_mode="HTML",
+            "⚠️ Usage: /set_dest <identifier>\nMake sure to add it via /add_dest first!"
         )
         return
 
-    username = args[0].lstrip("@").strip()
-    db.set_destination(username)
+    identifier = context.args[0].strip()
+    db: Database = context.bot_data["db"]
+
+    if db.set_default_dest(identifier):
+        await update.message.reply_text(
+            f"✅ Global default destination set to <code>{_escape_html(identifier)}</code>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ Destination not found. Add it using /add_dest first."
+        )
+
+
+async def show_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+    dest = db.get_default_dest()
+
+    if dest:
+        await update.message.reply_text(
+            f"🎯 Global Default: <code>{_escape_html(dest['identifier'])}</code>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text("📭 No global destination set.")
+
+
+async def clear_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    db: Database = context.bot_data["db"]
+    db.clear_default_dest()
+    await update.message.reply_text("🗑️ Global default destination cleared.")
+
+
+# ────────────────────────────────────────────────────────────
+#  Routing
+# ────────────────────────────────────────────────────────────
+
+
+async def link_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "⚠️ Usage: /link_source <source_ident> <dest_ident>\nBoth must exist in DB."
+        )
+        return
+
+    source_ident = context.args[0].strip()
+    dest_ident = context.args[1].strip()
+    db: Database = context.bot_data["db"]
+
+    if db.add_route(source_ident, dest_ident):
+        await update.message.reply_text(
+            f"✅ Linked <code>{_escape_html(source_ident)}</code> ➜ <code>{_escape_html(dest_ident)}</code>",
+            parse_mode="HTML",
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ Failed. Check if both identifiers exist and aren't already linked."
+        )
+
+
+async def unlink_source(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "⚠️ Usage: /unlink_source <source_ident> <dest_ident|all>"
+        )
+        return
+
+    source_ident = context.args[0].strip()
+    dest_ident = context.args[1].strip()
+    db: Database = context.bot_data["db"]
+
+    if dest_ident.lower() == "all":
+        count = db.remove_all_routes_for_source(source_ident)
+        await update.message.reply_text(
+            f"✅ Removed {count} routes for <code>{_escape_html(source_ident)}</code>",
+            parse_mode="HTML",
+        )
+    else:
+        if db.remove_route(source_ident, dest_ident):
+            await update.message.reply_text(
+                f"✅ Unlinked <code>{_escape_html(source_ident)}</code> ➜ <code>{_escape_html(dest_ident)}</code>",
+                parse_mode="HTML",
+            )
+        else:
+            await update.message.reply_text("⚠️ Route not found.")
+
+
+# ────────────────────────────────────────────────────────────
+#  Replace Rules
+# ────────────────────────────────────────────────────────────
+
+
+async def add_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /add_replace OldWord [NewWord]")
+        return
+    old_word = context.args[0]
+    new_word = " ".join(context.args[1:])
+    db: Database = context.bot_data["db"]
+
+    inserted = db.add_replace_rule(old_word, new_word)
+    verb = "Added" if inserted else "Updated"
     await update.message.reply_text(
-        f"🎯 Destination bot set to <code>@{_escape_html(username)}</code>!\n"
-        "All forwarded posts will be sent here.",
+        f"✅ {verb} replacement:\n\n"
+        f"Old: <code>{_escape_html(old_word)}</code>\n"
+        f"New: <code>{_escape_html(new_word)}</code>",
         parse_mode="HTML",
     )
 
 
-async def show_dest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /show_dest"""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    dest = db.get_destination()
-    if dest:
-        await update.message.reply_text(
-            f"🎯 Current destination: <code>@{_escape_html(dest)}</code>",
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text(
-            "⚠️ No destination bot set.\n"
-            "Use <code>/set_dest @BotUsername</code> to configure.",
-            parse_mode="HTML",
-        )
-
-
-# ────────────────────────────────────────────────────────────
-#  Word Replacement Rules
-# ────────────────────────────────────────────────────────────
-
-async def add_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /add_replace OldWord➜NewWord"""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = " ".join(context.args) if context.args else ""
-    if not args or "➜" not in args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/add_replace OldWord➜NewWord</code>\n\n"
-            "Use the ➜ arrow to separate old and new words.\n"
-            "Example: <code>/add_replace @OldChannel➜@MyChannel</code>\n"
-            "To remove a word entirely, leave the right side empty: <code>/add_replace @BadChannel➜</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    parts = args.split("➜", 1)
-    old_word = parts[0].strip()
-    new_word = parts[1].strip() if len(parts) > 1 else ""
-
-    if not old_word:
-        await update.message.reply_text("❌ Old word cannot be empty.")
-        return
-
-    db.add_replace_rule(old_word, new_word)
-    if new_word:
-        await update.message.reply_text(
-            f"✅ Replace rule added: <code>{_escape_html(old_word)}</code> → <code>{_escape_html(new_word)}</code>",
-            parse_mode="HTML",
-        )
-    else:
-        await update.message.reply_text(
-            f"✅ Replace rule added: <code>{_escape_html(old_word)}</code> → (removed)",
-            parse_mode="HTML",
-        )
-
-
 async def remove_replace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /remove_replace OldWord"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/remove_replace OldWord</code>\n\n"
-            "Example: <code>/remove_replace @OldChannel</code>",
-            parse_mode="HTML",
-        )
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /remove_replace OldWord")
         return
-
-    old_word = " ".join(args).strip()
+    old_word = context.args[0]
+    db: Database = context.bot_data["db"]
     if db.remove_replace_rule(old_word):
         await update.message.reply_text(
-            f"🗑️ Replace rule for <code>{_escape_html(old_word)}</code> removed.",
+            f"✅ Removed rule for: <code>{_escape_html(old_word)}</code>",
             parse_mode="HTML",
         )
     else:
-        await update.message.reply_text(
-            f"⚠️ No replace rule found for <code>{_escape_html(old_word)}</code>.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("⚠️ Word not found in replacement list.")
 
 
 async def list_replaces(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /list_replaces"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
-
     rules = db.get_all_replace_rules()
     if not rules:
-        await update.message.reply_text(
-            "📭 No replace rules configured.\n"
-            r"Use <code>/add_replace Old➜New</code> to create one.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("📭 No replacement rules set.")
         return
-
-    lines = ["✂️ <b>Replace Rules:</b>"]
-    for i, r in enumerate(rules, 1):
-        old = _escape_html(r["old_word"])
-        if r["new_word"]:
-            new = f"<code>{_escape_html(r['new_word'])}</code>"
-        else:
-            new = "(removed)"
-        lines.append(f"  {i}. <code>{old}</code> → {new}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    lines = ["✂️ <b>Replacement Rules:</b>\n"]
+    for r in rules:
+        nw = r["new_word"] if r["new_word"] else "(deleted)"
+        lines.append(
+            f"🔸 <code>{_escape_html(r['old_word'])}</code> ➜ <code>{_escape_html(nw)}</code>"
+        )
+    msg = "\n".join(lines)
+    for i in range(0, len(msg), 4000):
+        await update.message.reply_text(msg[i : i + 4000], parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
-#  Word Block Rules
+#  Block Rules
 # ────────────────────────────────────────────────────────────
+
 
 async def add_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /add_block BadWord"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/add_block BadWord</code>\n\n"
-            "Posts containing this word will be skipped.\n"
-            "Example: <code>/add_block Join @OtherChannel</code>",
-            parse_mode="HTML",
-        )
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /add_block BlockedWord")
         return
-
-    word = " ".join(args).strip()
+    word = context.args[0]
+    db: Database = context.bot_data["db"]
     if db.add_block_rule(word):
         await update.message.reply_text(
-            f"🚫 Block rule added: <code>{_escape_html(word)}</code>\n"
-            f"Posts containing this will be skipped.",
+            f"✅ <b>Blocked word added:</b>\n\n<code>{_escape_html(word)}</code>",
             parse_mode="HTML",
         )
     else:
-        await update.message.reply_text(
-            f"⚠️ <code>{_escape_html(word)}</code> is already in the block list.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("⚠️ Word is already blocked.")
 
 
 async def remove_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /remove_block BadWord"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/remove_block BadWord</code>\n\n"
-            "Example: <code>/remove_block Join @OtherChannel</code>",
-            parse_mode="HTML",
-        )
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /remove_block BlockedWord")
         return
-
-    word = " ".join(args).strip()
+    word = context.args[0]
+    db: Database = context.bot_data["db"]
     if db.remove_block_rule(word):
         await update.message.reply_text(
-            f"🗑️ Block rule for <code>{_escape_html(word)}</code> removed.",
+            f"✅ Removed block rule for: <code>{_escape_html(word)}</code>",
             parse_mode="HTML",
         )
     else:
-        await update.message.reply_text(
-            f"⚠️ No block rule found for <code>{_escape_html(word)}</code>.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("⚠️ Word not found in block list.")
 
 
 async def list_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /list_blocks"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
-
     rules = db.get_all_block_rules()
     if not rules:
-        await update.message.reply_text(
-            "📭 No block rules configured.\n" r"Use <code>/add_block Word</code> to create one.",
-            parse_mode="HTML",
-        )
+        await update.message.reply_text("📭 No blocked words set.")
         return
-
-    lines = ["🚫 <b>Blocked Words:</b>"]
-    for i, r in enumerate(rules, 1):
-        lines.append(f"  {i}. <code>{_escape_html(r['word'])}</code>")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+    lines = ["🚫 <b>Blocked Words:</b>\n"]
+    for r in rules:
+        lines.append(f"🔸 <code>{_escape_html(r['word'])}</code>")
+    msg = "\n".join(lines)
+    for i in range(0, len(msg), 4000):
+        await update.message.reply_text(msg[i : i + 4000], parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
 #  Header / Footer
 # ────────────────────────────────────────────────────────────
 
+
 async def set_header(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /set_header Text"""
     if not await _admin_only(update):
         return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/set_header Text</code>\n\n"
-            "This text will be added at the TOP of every forwarded post.\n"
-            "Example: <code>/set_header 📢 @MyDealsChannel</code>",
-            parse_mode="HTML",
-        )
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /set_header <text...>")
         return
-
-    text = " ".join(args).strip()
+    text = " ".join(context.args)
+    db: Database = context.bot_data["db"]
     db.set_header(text)
     await update.message.reply_text(
-        f"📌 Header set:\n\n{_escape_html(text)}",
-        parse_mode="HTML",
-    )
-
-
-async def set_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /set_footer Text"""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        await update.message.reply_text(
-            "❌ Usage: <code>/set_footer Text</code>\n\n"
-            "This text will be added at the BOTTOM of every forwarded post.\n"
-            "Example: <code>/set_footer 🔔 Join @MyDealsChannel for more!</code>",
-            parse_mode="HTML",
-        )
-        return
-
-    text = " ".join(args).strip()
-    db.set_footer(text)
-    await update.message.reply_text(
-        f"📌 Footer set:\n\n{_escape_html(text)}",
-        parse_mode="HTML",
+        f"✅ <b>Header set to:</b>\n\n{_escape_html(text)}", parse_mode="HTML"
     )
 
 
 async def clear_header(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /clear_header"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
@@ -648,8 +441,21 @@ async def clear_header(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("🗑️ Header cleared.")
 
 
+async def set_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /set_footer <text...>")
+        return
+    text = " ".join(context.args)
+    db: Database = context.bot_data["db"]
+    db.set_footer(text)
+    await update.message.reply_text(
+        f"✅ <b>Footer set to:</b>\n\n{_escape_html(text)}", parse_mode="HTML"
+    )
+
+
 async def clear_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /clear_footer"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
@@ -658,229 +464,164 @@ async def clear_footer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # ────────────────────────────────────────────────────────────
-#  Bot Control
+#  Bot Control / Dashboards
 # ────────────────────────────────────────────────────────────
 
+
+async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _admin_only(update):
+        return
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /set_delay <seconds>")
+        return
+    try:
+        delay = float(context.args[0])
+        if delay < 0:
+            raise ValueError
+        db: Database = context.bot_data["db"]
+        db.set_forward_delay(delay)
+        await update.message.reply_text(
+            f"⏱️ Forward delay set to <b>{delay}</b> seconds.", parse_mode="HTML"
+        )
+    except ValueError:
+        await update.message.reply_text("⚠️ Please provide a valid positive number.")
+
+
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /status"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
-
     stats = db.get_all_stats()
-    dest = db.get_destination()
-    header = db.get_header()
-    footer = db.get_footer()
 
-    pause_text = "⏸️ PAUSED" if stats["paused"] else "▶️ RUNNING"
+    status_emoji = "⏸️ PAUSED" if stats["paused"] else "▶️ RUNNING"
+    header_preview = db.get_header() or "(None)"
+    footer_preview = db.get_footer() or "(None)"
+    default_dest = db.get_default_dest()
+    dest_str = default_dest["identifier"] if default_dest else "(None)"
 
-    safe_dest = _escape_html(dest) if dest else _escape_html("NOT SET")
-    lines = [
-        f"🤖 <b>Bot Status: {pause_text}</b>",
-        "",
-        f"📡 Sources: <code>{stats['source_count']}</code>",
-        f"🎯 Destination: <code>@{safe_dest}</code>",
-        f"⏱️ Forward Delay: <code>{stats['forward_delay']}s</code>",
-        "",
-        f"✅ Forwarded: <code>{stats['total_forwarded']}</code>",
-        f"⛔ Skipped: <code>{stats['total_skipped']}</code>",
-        f"📌 Header: {'Set' if header else 'Not set'}",
-        f"📌 Footer: {'Set' if footer else 'Not set'}",
-    ]
-
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("⏸️ Pause", callback_data="pause"),
-            InlineKeyboardButton("▶️ Resume", callback_data="resume"),
-        ]
-    ])
-
-    await update.message.reply_text(
-        "\n".join(lines), parse_mode="HTML", reply_markup=keyboard,
+    msg = (
+        f"🤖 <b>Bot Status: {status_emoji}</b>\n\n"
+        f"📡 <b>Sources:</b> {stats['source_count']}\n"
+        f"🎯 <b>Global Dest:</b> <code>{_escape_html(dest_str)}</code>\n"
+        f"⏱️ <b>Delay:</b> {stats['forward_delay']}s\n\n"
+        f"📌 <b>Header:</b> <code>{_escape_html(header_preview[:30])}</code>...\n"
+        f"📌 <b>Footer:</b> <code>{_escape_html(footer_preview[:30])}</code>..."
     )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("▶️ Resume", callback_data="cmd_resume"),
+            InlineKeyboardButton("⏸️ Pause", callback_data="cmd_pause"),
+        ],
+        [
+            InlineKeyboardButton("📈 Stats", callback_data="cmd_stats"),
+            InlineKeyboardButton("📋 Sources", callback_data="cmd_sources"),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode="HTML")
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /pause"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
     db.set_paused(True)
     await update.message.reply_text(
-        "⏸️ Forwarding PAUSED. Use <code>/resume</code> to continue.",
+        "⏸️ <b>Forwarding Paused</b>\nThe bot will ignore new posts until resumed.",
         parse_mode="HTML",
     )
 
 
-async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /set_delay seconds"""
-    if not await _admin_only(update):
-        return
-    db: Database = context.bot_data["db"]
-
-    args = context.args
-    if not args:
-        current = db.get_forward_delay()
-        await update.message.reply_text(
-            f"⏱️ Current forward delay: <code>{current:.1f}s</code>\n\n"
-            "Usage: <code>/set_delay 5</code> (seconds, minimum 1)",
-            parse_mode="HTML",
-        )
-        return
-
-    try:
-        seconds = float(args[0])
-        if seconds < 1.0:
-            await update.message.reply_text("❌ Delay must be at least 1 second.")
-            return
-        db.set_forward_delay(seconds)
-        await update.message.reply_text(
-            f"⏱️ Forward delay set to <code>{seconds:.1f}s</code>.",
-            parse_mode="HTML",
-        )
-    except ValueError:
-        await update.message.reply_text(
-            "❌ Please provide a valid number (e.g., <code>/set_delay 5</code>).",
-            parse_mode="HTML",
-        )
-
-
 async def resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /resume"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
     db.set_paused(False)
-    await update.message.reply_text("▶️ Forwarding RESUMED.")
+    await update.message.reply_text(
+        "▶️ <b>Forwarding Resumed</b>\nThe bot is now monitoring for new posts.",
+        parse_mode="HTML",
+    )
 
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /stats"""
     if not await _admin_only(update):
         return
     db: Database = context.bot_data["db"]
+    st = db.get_all_stats()
+    recent = db.get_recent_history(limit=5)
 
-    s = db.get_all_stats()
-    recent = db.get_recent_history(10)
+    msg = (
+        f"📈 <b>Lifetime Statistics</b>\n\n"
+        f"✅ Total Forwarded: <b>{st['total_forwarded']}</b>\n"
+        f"🚫 Total Skipped: <b>{st['total_skipped']}</b>\n\n"
+        f"📝 <b>Recent Activity (Last 5):</b>\n"
+    )
 
-    lines = [
-        "📊 <b>Statistics</b>",
-        "",
-        f"✅ Total Forwarded: <code>{s['total_forwarded']}</code>",
-        f"⛔ Total Skipped: <code>{s['total_skipped']}</code>",
-        f"📡 Active Sources: <code>{s['source_count']}</code>",
-        "",
-    ]
-
-    if recent:
-        lines.append("<b>Recent Activity:</b>")
+    if not recent:
+        msg += "<i>No recent activity found.</i>"
+    else:
         for r in recent:
-            emoji = "✅" if r["status"] == "forwarded" else "⛔"
-            source = _escape_html(r.get("source") or "?")
-            ts = _escape_html(r["forwarded_at"])
-            lines.append(f"  {emoji} <code>@{source}</code> — {ts}")
+            src = r["source"] or "Unknown"
+            status_ico = "✅" if r["status"] == "forwarded" else "❌"
+            msg += f"{status_ico} <code>{_escape_html(src)}</code> <i>({r['forwarded_at']})</i>\n"
 
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
-# ────────────────────────────────────────────────────────────
-#  Callback Query Handler (inline buttons)
-# ────────────────────────────────────────────────────────────
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline button presses from status message."""
-    query = update.callback_query
-    if not _is_admin(update):
-        await query.answer("Access denied.", show_alert=True)
-        return
-
-    db: Database = context.bot_data["db"]
-    data = query.data
-
-    if data == "pause":
-        db.set_paused(True)
-        # Toggle the keyboard so the only remaining button is "Resume".
-        # This avoids editing the message text (which would lose HTML
-        # formatting when re-sent as plain text) and avoids any
-        # MarkdownV2 escape-parsing failures on rendered dots like "5.0s".
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Resume", callback_data="resume")]
-        ])
-        await query.edit_message_reply_markup(reply_markup=keyboard)
-        # Send a separate short confirmation (plain text, no parse_mode risks).
-        await query.answer("Forwarding paused.")
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="⏸️ Forwarding PAUSED. Use /resume or the button below to resume.",
-        )
-    elif data == "resume":
-        db.set_paused(False)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏸️ Pause", callback_data="pause")]
-        ])
-        await query.edit_message_reply_markup(reply_markup=keyboard)
-        await query.answer("Forwarding resumed.")
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="▶️ Forwarding RESUMED.",
-        )
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
-#  Start / Help
+#  General Commands
 # ────────────────────────────────────────────────────────────
+
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /start — show welcome + available commands."""
     if not await _admin_only(update):
         return
+    welcome = (
+        "👋 <b>Welcome to Auto-Forwarding Bot Admin!</b>\n\n"
+        "Use the menu ↙️ (type /) to see all commands.\n"
+        "To get started, try /status or /list_sources."
+    )
+    await update.message.reply_text(welcome, parse_mode="HTML")
 
-    lines = [
-        "🤖 <b>Telegram Auto-Forwarding Bot — Admin Panel</b>",
-        "",
-        "Welcome! Manage your forwarding setup with these commands:",
-        "",
-        "📡 <b>Sources:</b>",
-        "  <code>/add_source @channel</code> — Add source",
-        "  <code>/remove_source @channel</code> — Remove source",
-        "  <code>/list_sources</code> — View all sources",
-        "",
-        "🎯 <b>Destination:</b>",
-        "  <code>/set_dest @bot</code> — Set global destination bot",
-        "  <code>/show_dest</code> — View current global destination",
-        "",
-        "📡 <b>Per-Source Mapping:</b>",
-        "  <code>/set_source_dest @channel @bot</code> — Set exclusive dest",
-        "  <code>/add_dest @channel @bot</code> — Add extra dest",
-        "  <code>/remove_dest @channel @bot</code> — Remove dest",
-        "  <code>/list_dests @channel</code> — View all dests for a source",
-        "",
-        "✂️ <b>Customization:</b>",
-        "  <code>/add_replace Old➜New</code> — Add word replacement",
-        "  <code>/remove_replace Old</code> — Remove replacement",
-        "  <code>/list_replaces</code> — View all replacements",
-        "  <code>/add_block Word</code> — Block posts with this word",
-        "  <code>/remove_block Word</code> — Remove block rule",
-        "  <code>/list_blocks</code> — View all block rules",
-        "  <code>/set_header Text</code> — Add header",
-        "  <code>/set_footer Text</code> — Add footer",
-        "  <code>/clear_header</code> — Remove header",
-        "  <code>/clear_footer</code> — Remove footer",
-        "",
-        "⚙️ <b>Control:</b>",
-        "  <code>/status</code> — Current status",
-        "  <code>/pause</code> — Pause forwarding",
-        "  <code>/resume</code> — Resume forwarding",
-        "  <code>/stats</code> — Statistics",
-        "  <code>/set_delay 5</code> — Set delay between forwards (seconds)",
-    ]
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
-# ────────────────────────────────────────────────────────────
-#  Help handler
-# ────────────────────────────────────────────────────────────
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler: /help — alias for start."""
-    await start_cmd(update, context)
+    if not await _admin_only(update):
+        return
+    # Now that we registered commands with Telegram, the built-in menu works.
+    await update.message.reply_text(
+        "💡 <b>Help</b>\n\n"
+        "All commands are now available in the bot menu.\n"
+        "Tap the blue <code>Menu</code> button or type <code>/</code> to see them.\n\n"
+        "<i>Quick setup:</i>\n"
+        "1. /add_dest @MyBot\n"
+        "2. /set_dest @MyBot\n"
+        "3. /add_source @SourceChannel",
+        parse_mode="HTML",
+    )
+
+
+# ────────────────────────────────────────────────────────────
+#  Callback Query Handler (Inline Buttons)
+# ────────────────────────────────────────────────────────────
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    # Protect buttons just in case
+    if query.from_user.id != _get_admin_id():
+        await query.answer("⛔ Access denied", show_alert=True)
+        return
+
+    await query.answer()
+    data = query.data
+
+    if data == "cmd_pause":
+        await pause(update, context)
+    elif data == "cmd_resume":
+        await resume(update, context)
+    elif data == "cmd_stats":
+        await stats(update, context)
+    elif data == "cmd_sources":
+        await list_sources(update, context)

@@ -2,19 +2,22 @@
 SQLite database module for the Telegram Auto-Forwarding Bot.
 
 Manages all persistent storage:
-- Source channels
-- Destination bot
+- Sources (Universal identifier: username/id/invite)
+- Destinations (Universal identifier)
+- Routes (source -> destination mapping)
 - Replace rules (word -> replacement)
 - Block rules (blocked words)
-- Settings (header, footer, pause status, forward delay)
-- Forward history (for dedup & stats)
+- Settings (header, footer, pause status, forward delay, default dest)
+- Dedup window (cross-source sliding window dedup)
+- Forward history (for stats)
 """
 
 import sqlite3
 import threading
 import hashlib
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 
 from utils.logger import get_logger
 
@@ -23,12 +26,33 @@ logger = get_logger(__name__)
 DB_PATH = Path(__file__).parent.parent / "bot_data.db"
 
 
+def normalize_for_dedup(text: str) -> str:
+    """Normalize text for cross-source comparison."""
+    if not text:
+        return ""
+
+    text = text.lower()
+    # Remove URLs
+    text = re.sub(r"https?://\S+", "", text)
+    # Remove @mentions
+    text = re.sub(r"@\w+", "", text)
+    # Remove #hashtags
+    text = re.sub(r"#\w+", "", text)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
+
+
+def content_hash(text: str) -> str:
+    """Generate SHA256 hash of normalized text."""
+    normalized = normalize_for_dedup(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 class Database:
     """
     Thread-safe SQLite database wrapper.
-
-    All state is stored in a single SQLite file. Writes are serialized
-    via a reentrant lock; reads use WAL mode for concurrent access.
     """
 
     def __init__(self, db_path: Optional[Path] = None):
@@ -40,6 +64,7 @@ class Database:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
+        self._migrate_old_tables()
         self._set_defaults()
         logger.info("Database initialised at %s", self.db_path)
 
@@ -50,19 +75,39 @@ class Database:
     def _create_tables(self) -> None:
         with self._lock:
             self.conn.executescript("""
-                CREATE TABLE IF NOT EXISTS source_channels (
+                CREATE TABLE IF NOT EXISTS sources (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username    TEXT    NOT NULL UNIQUE,
-                    channel_id  INTEGER,
-                    destination TEXT    DEFAULT NULL,  -- NULL = use global /set_dest
+                    identifier  TEXT    NOT NULL UNIQUE,   -- @username, numeric_id, or invite_hash
+                    chat_id     INTEGER,                   -- resolved Telegram chat ID
+                    title       TEXT    DEFAULT '',
+                    entity_type TEXT    DEFAULT 'unknown',
                     added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
 
-                CREATE TABLE IF NOT EXISTS destination (
-                    id          INTEGER PRIMARY KEY CHECK (id = 1),
-                    username    TEXT    NOT NULL,
-                    set_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+                CREATE TABLE IF NOT EXISTS destinations (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    identifier  TEXT    NOT NULL UNIQUE,
+                    chat_id     INTEGER,
+                    title       TEXT    DEFAULT '',
+                    entity_type TEXT    DEFAULT 'unknown',
+                    added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
+
+                CREATE TABLE IF NOT EXISTS routes (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id   INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                    dest_id     INTEGER NOT NULL REFERENCES destinations(id) ON DELETE CASCADE,
+                    added_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(source_id, dest_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS dedup_window (
+                    content_hash    TEXT    PRIMARY KEY,
+                    first_source_id INTEGER NOT NULL,
+                    first_seen_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+                    forwarded       INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_dedup_seen ON dedup_window(first_seen_at);
 
                 CREATE TABLE IF NOT EXISTS replace_rules (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,67 +127,109 @@ class Database:
                     value       TEXT    NOT NULL
                 );
 
+                -- Legacy forward history mostly for stats now
                 CREATE TABLE IF NOT EXISTS forward_history (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_id   INTEGER NOT NULL,
                     message_hash TEXT   NOT NULL,
                     status      TEXT    NOT NULL DEFAULT 'forwarded',
-                    forwarded_at TEXT    NOT NULL DEFAULT (datetime('now')),
-                    UNIQUE(source_id, message_hash)
+                    forwarded_at TEXT    NOT NULL DEFAULT (datetime('now'))
                 );
-
                 CREATE INDEX IF NOT EXISTS idx_fwd_source ON forward_history(source_id);
-                CREATE INDEX IF NOT EXISTS idx_fwd_hash  ON forward_history(message_hash);
-
-                -- Multi-destination: 1 source → many bots
-                CREATE TABLE IF NOT EXISTS source_destinations (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_id   INTEGER NOT NULL REFERENCES source_channels(id) ON DELETE CASCADE,
-                    bot_username TEXT NOT NULL,
-                    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
-                    UNIQUE(source_id, bot_username)
-                );
             """)
             self.conn.commit()
 
-            # -- Migration: ensure replace_rules has UNIQUE constraint on old_word
-            # (handles upgrades from schema without it)
+    def _migrate_old_tables(self) -> None:
+        """Migrate data from old tables to new universal tables, then drop old tables."""
+        with self._lock:
             cur = self.conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='replace_rules'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='source_channels'"
             )
-            indexes = [row[0] or "" for row in cur.fetchall()]
-            unique_index_present = any("UNIQUE" in idx and "old_word" in idx for idx in indexes)
-            if not unique_index_present:
-                self.conn.execute(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_replace_unique ON replace_rules(old_word)"
-                )
-                # De-dupe pre-existing duplicates by keeping the lowest id row
-                self.conn.execute(
-                    """DELETE FROM replace_rules
-                       WHERE id NOT IN (
-                           SELECT MIN(id) FROM replace_rules GROUP BY old_word
-                       )"""
-                )
-                self.conn.commit()
-                logger.info("Migrated replace_rules: UNIQUE constraint on old_word applied.")
+            if cur.fetchone() is None:
+                return  # No old tables
 
-            # -- Migration: add per-source destination column (for multi-bot forwarding)
-            cur = self.conn.execute("PRAGMA table_info(source_channels)")
-            columns = [row["name"] for row in cur.fetchall()]
-            if "destination" not in columns:
+            logger.info("Migrating old database schema to universal entities...")
+
+            # Migrate global destination
+            cur = self.conn.execute("SELECT username FROM destination WHERE id = 1")
+            row = cur.fetchone()
+            if row:
+                dest_uname = "@" + row["username"].lstrip("@")
                 self.conn.execute(
-                    "ALTER TABLE source_channels ADD COLUMN destination TEXT DEFAULT NULL"
+                    "INSERT OR IGNORE INTO destinations (identifier, title, entity_type) VALUES (?, ?, ?)",
+                    (dest_uname, dest_uname, "bot"),
                 )
-                self.conn.commit()
-                logger.info("Migrated source_channels: added destination column.")
+                dest_id_row = self.conn.execute(
+                    "SELECT id FROM destinations WHERE identifier = ?", (dest_uname,)
+                ).fetchone()
+                if dest_id_row:
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_dest_id', ?)",
+                        (str(dest_id_row["id"]),),
+                    )
+
+            # Migrate sources and their routes
+            cur = self.conn.execute(
+                "SELECT id, username, channel_id, destination FROM source_channels"
+            )
+            for src in cur.fetchall():
+                src_ident = "@" + src["username"].lstrip("@")
+                chat_id = src["channel_id"]
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO sources (identifier, chat_id, title) VALUES (?, ?, ?)",
+                    (src_ident, chat_id, src_ident),
+                )
+                new_src_id_row = self.conn.execute(
+                    "SELECT id FROM sources WHERE identifier = ?", (src_ident,)
+                ).fetchone()
+                if not new_src_id_row:
+                    continue
+                new_src_id = new_src_id_row["id"]
+
+                dests_to_link = []
+                if src["destination"]:
+                    dests_to_link.append("@" + src["destination"].lstrip("@"))
+
+                # Get multi-dests
+                cur2 = self.conn.execute(
+                    "SELECT bot_username FROM source_destinations WHERE source_id = ?",
+                    (src["id"],),
+                )
+                for sdest in cur2.fetchall():
+                    sdest_ident = "@" + sdest["bot_username"].lstrip("@")
+                    if sdest_ident not in dests_to_link:
+                        dests_to_link.append(sdest_ident)
+
+                for dest_ident in dests_to_link:
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO destinations (identifier, title) VALUES (?, ?)",
+                        (dest_ident, dest_ident),
+                    )
+                    dest_id_row = self.conn.execute(
+                        "SELECT id FROM destinations WHERE identifier = ?",
+                        (dest_ident,),
+                    ).fetchone()
+                    if dest_id_row:
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO routes (source_id, dest_id) VALUES (?, ?)",
+                            (new_src_id, dest_id_row["id"]),
+                        )
+
+            # Drop old tables
+            self.conn.executescript("""
+                DROP TABLE IF EXISTS source_destinations;
+                DROP TABLE IF EXISTS source_channels;
+                DROP TABLE IF EXISTS destination;
+            """)
+            self.conn.commit()
+            logger.info("Migration complete. Old tables dropped.")
 
     def _set_defaults(self) -> None:
-        """Ensure default settings rows exist."""
         defaults = {
             "header": "",
             "footer": "",
             "paused": "false",
-            "forward_delay": "3.0",        # seconds between forwards
+            "forward_delay": "3.0",
             "total_forwarded": "0",
             "total_skipped": "0",
         }
@@ -155,365 +242,8 @@ class Database:
             self.conn.commit()
 
     # ──────────────────────────────────────────────
-    #  Source Channels
+    #  Settings Helper
     # ──────────────────────────────────────────────
-
-    def add_source(
-        self,
-        username: str,
-        channel_id: Optional[int] = None,
-        dest: Optional[str] = None,
-    ) -> bool:
-        """Add a source channel. Returns True if added, False if already exists.
-
-        Args:
-            username: Channel username (without @).
-            channel_id: Optional resolved channel_id for private channels.
-            dest: Optional EXCLUSIVE destination bot username (without @).
-                  If set, ALL posts from this source will forward ONLY to this
-                  bot. If None, posts fall back to the global /set_dest bot.
-        """
-        username = username.lstrip("@").strip()
-        dest_clean = dest.lstrip("@").strip() if dest else None
-        with self._lock:
-            try:
-                self.conn.execute(
-                    "INSERT INTO source_channels (username, channel_id, destination) VALUES (?, ?, ?)",
-                    (username, channel_id, dest_clean),
-                )
-                self.conn.commit()
-                suffix = f" -> @{dest_clean}" if dest_clean else ""
-                logger.info("Source added: @%s%s", username, suffix)
-                return True
-            except sqlite3.IntegrityError:
-                return False
-
-    def set_source_destination(
-        self, username: str, destination: Optional[str]
-    ) -> bool:
-        """Set or clear the EXCLUSIVE destination for a source channel.
-
-        Pass destination=None (or 'default' handled at handler layer) to clear
-        the per-source mapping — the source will then fall back to the
-        global /set_dest bot.
-
-        ALSO syncs the source_destinations table so the engine's multi-dest
-        lookup sees this change. Any existing multi-dest entries are replaced
-        with just this single destination (or cleared if destination is None).
-
-        Returns True if the source was found and updated.
-        """
-        username = username.lstrip("@").strip()
-        dest_clean = destination.lstrip("@").strip() if destination else None
-        with self._lock:
-            # Update the destination column (backward compat + single-dest fallback)
-            cur = self.conn.execute(
-                "UPDATE source_channels SET destination = ? WHERE username = ?",
-                (dest_clean, username),
-            )
-            if cur.rowcount == 0:
-                return False
-
-            # Sync source_destinations table so multi-dest engine sees this change.
-            # 1. Find source_id
-            row = self.conn.execute(
-                "SELECT id FROM source_channels WHERE username = ?", (username,)
-            ).fetchone()
-            if row is not None:
-                source_id = row["id"]
-                # 2. Clear ALL existing multi-dest entries
-                self.conn.execute(
-                    "DELETE FROM source_destinations WHERE source_id = ?",
-                    (source_id,),
-                )
-                # 3. Add the new destination (if any) as the sole entry
-                if dest_clean:
-                    self.conn.execute(
-                        "INSERT INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
-                        (source_id, dest_clean),
-                    )
-
-            self.conn.commit()
-            logger.info(
-                "Source @%s destination set%s (synced multi-dest)",
-                username,
-                f" -> @{dest_clean}" if dest_clean else " -> DEFAULT",
-            )
-            return True
-
-    def update_source_channel_id(self, username: str, channel_id: int) -> bool:
-        """Persist the resolved Telegram channel_id back to the DB so we can
-        match messages from private channels later. Returns True if updated."""
-        username = username.lstrip("@").strip()
-        with self._lock:
-            cur = self.conn.execute(
-                "UPDATE source_channels SET channel_id = ? WHERE username = ?",
-                (channel_id, username),
-            )
-            self.conn.commit()
-            return cur.rowcount > 0
-
-    def remove_source(self, username: str) -> bool:
-        """Remove a source channel by username. Returns True if removed."""
-        username = username.lstrip("@").strip()
-        with self._lock:
-            cur = self.conn.execute(
-                "DELETE FROM source_channels WHERE username = ?", (username,)
-            )
-            self.conn.commit()
-            removed = cur.rowcount > 0
-            if removed:
-                logger.info("Source removed: @%s", username)
-            return removed
-
-    def get_all_sources(self) -> list[dict]:
-        """Return all source channels as list of dicts."""
-        cur = self.conn.execute(
-            "SELECT id, username, channel_id, destination, added_at "
-            "FROM source_channels ORDER BY id"
-        )
-        return [dict(row) for row in cur.fetchall()]
-
-    def get_source_count(self) -> int:
-        cur = self.conn.execute("SELECT COUNT(*) FROM source_channels")
-        return cur.fetchone()[0]
-
-    # ──────────────────────────────────────────────
-    #  Source Multi-Destinations (1 source → many bots)
-    # ──────────────────────────────────────────────
-
-    def add_source_dest(self, source_username: str, bot_username: str) -> bool:
-        """Add a bot destination for a source channel. Returns True if added.
-
-        If this is the FIRST destination being added and the source has an
-        existing `destination` column value, that bot is auto-included too
-        so the user doesn't lose the original exclusive mapping.
-        """
-        source_username = source_username.lstrip("@").strip()
-        bot_username = bot_username.lstrip("@").strip()
-        if not bot_username:
-            return False
-
-        with self._lock:
-            # Find source id
-            cur = self.conn.execute(
-                "SELECT id, destination FROM source_channels WHERE username = ?",
-                (source_username,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return False
-            source_id = row["id"]
-            existing_dest = row["destination"]
-
-            # Check if this is the first dest — if so, auto-include the
-            # existing `destination` column bot so user doesn't lose it.
-            cur = self.conn.execute(
-                "SELECT COUNT(*) FROM source_destinations WHERE source_id = ?",
-                (source_id,),
-            )
-            dest_count = cur.fetchone()[0]
-
-            if dest_count == 0 and existing_dest:
-                # Auto-add the existing exclusive destination as well
-                try:
-                    self.conn.execute(
-                        "INSERT OR IGNORE INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
-                        (source_id, existing_dest),
-                    )
-                except sqlite3.IntegrityError:
-                    pass
-
-            # Add the new destination
-            try:
-                self.conn.execute(
-                    "INSERT INTO source_destinations (source_id, bot_username) VALUES (?, ?)",
-                    (source_id, bot_username),
-                )
-                self.conn.commit()
-                logger.info(
-                    "Dest added for @%s: @%s", source_username, bot_username
-                )
-                return True
-            except sqlite3.IntegrityError:
-                return False
-
-    def remove_source_dest(self, source_username: str, bot_username: str) -> bool:
-        """Remove a bot destination from a source. Returns True if removed."""
-        source_username = source_username.lstrip("@").strip()
-        bot_username = bot_username.lstrip("@").strip()
-
-        with self._lock:
-            cur = self.conn.execute(
-                "SELECT id FROM source_channels WHERE username = ?",
-                (source_username,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return False
-            source_id = row["id"]
-
-            cur = self.conn.execute(
-                "DELETE FROM source_destinations WHERE source_id = ? AND bot_username = ?",
-                (source_id, bot_username),
-            )
-            self.conn.commit()
-            removed = cur.rowcount > 0
-            if removed:
-                logger.info(
-                    "Dest removed for @%s: @%s", source_username, bot_username
-                )
-            return removed
-
-    def get_source_dests(self, source_username: str) -> list[str]:
-        """Get all bot destinations for a source channel. Returns empty list if none."""
-        source_username = source_username.lstrip("@").strip()
-
-        with self._lock:
-            cur = self.conn.execute(
-                "SELECT id FROM source_channels WHERE username = ?",
-                (source_username,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return []
-            source_id = row["id"]
-
-            cur = self.conn.execute(
-                "SELECT bot_username FROM source_destinations WHERE source_id = ? ORDER BY id",
-                (source_id,),
-            )
-            return [row["bot_username"] for row in cur.fetchall()]
-
-    def clear_source_dests(self, source_username: str) -> int:
-        """Remove all bot destinations for a source. Returns count removed."""
-        source_username = source_username.lstrip("@").strip()
-
-        with self._lock:
-            cur = self.conn.execute(
-                "SELECT id FROM source_channels WHERE username = ?",
-                (source_username,),
-            )
-            row = cur.fetchone()
-            if row is None:
-                return 0
-            source_id = row["id"]
-
-            cur = self.conn.execute(
-                "DELETE FROM source_destinations WHERE source_id = ?",
-                (source_id,),
-            )
-            self.conn.commit()
-            removed = cur.rowcount
-            if removed:
-                logger.info(
-                    "Cleared %d dests for @%s", removed, source_username
-                )
-            return removed
-
-    # ──────────────────────────────────────────────
-    #  Destination
-    # ──────────────────────────────────────────────
-
-    def set_destination(self, username: str) -> None:
-        username = username.lstrip("@").strip()
-        with self._lock:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO destination (id, username, set_at) VALUES (1, ?, datetime('now'))",
-                (username,),
-            )
-            self.conn.commit()
-            logger.info("Destination set to @%s", username)
-
-    def get_destination(self) -> Optional[str]:
-        cur = self.conn.execute("SELECT username FROM destination WHERE id = 1")
-        row = cur.fetchone()
-        return row["username"] if row else None
-
-    # ──────────────────────────────────────────────
-    #  Replace Rules
-    # ──────────────────────────────────────────────
-
-    def add_replace_rule(self, old_word: str, new_word: str = "") -> bool:
-        """Add or replace (upsert) a word-replacement rule keyed by old_word.
-        Returns True if a new row was inserted, False if an existing rule was updated.
-        """
-        with self._lock:
-            cur = self.conn.execute(
-                """INSERT INTO replace_rules (old_word, new_word)
-                   VALUES (?, ?)
-                   ON CONFLICT(old_word) DO UPDATE SET new_word = excluded.new_word""",
-                (old_word, new_word),
-            )
-            self.conn.commit()
-            inserted = cur.rowcount > 0
-            logger.info(
-                "Replace rule %s: '%s' -> '%s'",
-                "added" if inserted else "updated",
-                old_word,
-                new_word,
-            )
-            return inserted
-
-    def remove_replace_rule(self, old_word: str) -> bool:
-        with self._lock:
-            cur = self.conn.execute(
-                "DELETE FROM replace_rules WHERE old_word = ?", (old_word,)
-            )
-            self.conn.commit()
-            removed = cur.rowcount > 0
-            if removed:
-                logger.info("Replace rule removed for: '%s'", old_word)
-            return removed
-
-    def get_all_replace_rules(self) -> list[dict]:
-        cur = self.conn.execute(
-            "SELECT id, old_word, new_word, created_at FROM replace_rules ORDER BY id"
-        )
-        return [dict(row) for row in cur.fetchall()]
-
-    # ──────────────────────────────────────────────
-    #  Block Rules
-    # ──────────────────────────────────────────────
-
-    def add_block_rule(self, word: str) -> bool:
-        with self._lock:
-            try:
-                self.conn.execute(
-                    "INSERT INTO block_rules (word) VALUES (?)", (word,)
-                )
-                self.conn.commit()
-                logger.info("Block rule added: '%s'", word)
-                return True
-            except sqlite3.IntegrityError:
-                return False
-
-    def remove_block_rule(self, word: str) -> bool:
-        with self._lock:
-            cur = self.conn.execute(
-                "DELETE FROM block_rules WHERE word = ?", (word,)
-            )
-            self.conn.commit()
-            removed = cur.rowcount > 0
-            if removed:
-                logger.info("Block rule removed: '%s'", word)
-            return removed
-
-    def get_all_block_rules(self) -> list[dict]:
-        cur = self.conn.execute(
-            "SELECT id, word, created_at FROM block_rules ORDER BY id"
-        )
-        return [dict(row) for row in cur.fetchall()]
-
-    def get_all_block_words(self) -> list[str]:
-        """Return list of blocked words (strings only) for quick lookup."""
-        cur = self.conn.execute("SELECT word FROM block_rules")
-        return [row["word"] for row in cur.fetchall()]
-
-    # ──────────────────────────────────────────────
-    #  Settings
-    # ──────────────────────────────────────────────
-
     def _get_setting(self, key: str, default: str = "") -> str:
         cur = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
         row = cur.fetchone()
@@ -527,7 +257,293 @@ class Database:
             )
             self.conn.commit()
 
-    # -- Header --
+    # ──────────────────────────────────────────────
+    #  Sources
+    # ──────────────────────────────────────────────
+
+    def add_source(self, identifier: str) -> bool:
+        identifier = identifier.strip()
+        with self._lock:
+            try:
+                self.conn.execute(
+                    "INSERT INTO sources (identifier) VALUES (?)", (identifier,)
+                )
+                self.conn.commit()
+                logger.info("Source added: %s", identifier)
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_source(self, identifier: str) -> bool:
+        identifier = identifier.strip()
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM sources WHERE identifier = ?", (identifier,)
+            )
+            self.conn.commit()
+            removed = cur.rowcount > 0
+            if removed:
+                logger.info("Source removed: %s", identifier)
+            return removed
+
+    def get_all_sources(self) -> List[Dict]:
+        cur = self.conn.execute("SELECT * FROM sources ORDER BY id")
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_source_by_identifier(self, identifier: str) -> Optional[Dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM sources WHERE identifier = ?", (identifier,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def update_source_metadata(
+        self, source_id: int, chat_id: int, title: str, entity_type: str
+    ) -> None:
+        with self._lock:
+            self.conn.execute(
+                "UPDATE sources SET chat_id = ?, title = ?, entity_type = ? WHERE id = ?",
+                (chat_id, title, entity_type, source_id),
+            )
+            self.conn.commit()
+
+    def get_source_count(self) -> int:
+        cur = self.conn.execute("SELECT COUNT(*) FROM sources")
+        return cur.fetchone()[0]
+
+    # ──────────────────────────────────────────────
+    #  Destinations
+    # ──────────────────────────────────────────────
+
+    def add_destination(self, identifier: str) -> bool:
+        identifier = identifier.strip()
+        with self._lock:
+            try:
+                self.conn.execute(
+                    "INSERT INTO destinations (identifier) VALUES (?)", (identifier,)
+                )
+                self.conn.commit()
+                logger.info("Destination added: %s", identifier)
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_destination(self, identifier: str) -> bool:
+        identifier = identifier.strip()
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM destinations WHERE identifier = ?", (identifier,)
+            )
+            self.conn.commit()
+            removed = cur.rowcount > 0
+            if removed:
+                logger.info("Destination removed: %s", identifier)
+            return removed
+
+    def get_all_destinations(self) -> List[Dict]:
+        cur = self.conn.execute("SELECT * FROM destinations ORDER BY id")
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_destination_by_identifier(self, identifier: str) -> Optional[Dict]:
+        cur = self.conn.execute(
+            "SELECT * FROM destinations WHERE identifier = ?", (identifier,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def update_dest_metadata(
+        self, dest_id: int, chat_id: int, title: str, entity_type: str
+    ) -> None:
+        with self._lock:
+            self.conn.execute(
+                "UPDATE destinations SET chat_id = ?, title = ?, entity_type = ? WHERE id = ?",
+                (chat_id, title, entity_type, dest_id),
+            )
+            self.conn.commit()
+
+    def set_default_dest(self, dest_identifier: str) -> bool:
+        dest = self.get_destination_by_identifier(dest_identifier)
+        if not dest:
+            return False
+        self._set_setting("default_dest_id", str(dest["id"]))
+        logger.info("Global default destination set to %s", dest_identifier)
+        return True
+
+    def clear_default_dest(self) -> None:
+        self._set_setting("default_dest_id", "")
+        logger.info("Global default destination cleared")
+
+    def get_default_dest(self) -> Optional[Dict]:
+        dest_id = self._get_setting("default_dest_id")
+        if not dest_id:
+            return None
+        cur = self.conn.execute("SELECT * FROM destinations WHERE id = ?", (dest_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ──────────────────────────────────────────────
+    #  Routes (Source -> Destination mapping)
+    # ──────────────────────────────────────────────
+
+    def add_route(self, source_ident: str, dest_ident: str) -> bool:
+        with self._lock:
+            s_row = self.conn.execute(
+                "SELECT id FROM sources WHERE identifier = ?", (source_ident,)
+            ).fetchone()
+            d_row = self.conn.execute(
+                "SELECT id FROM destinations WHERE identifier = ?", (dest_ident,)
+            ).fetchone()
+
+            if not s_row or not d_row:
+                return False
+
+            try:
+                self.conn.execute(
+                    "INSERT INTO routes (source_id, dest_id) VALUES (?, ?)",
+                    (s_row["id"], d_row["id"]),
+                )
+                self.conn.commit()
+                logger.info("Route added: %s -> %s", source_ident, dest_ident)
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_route(self, source_ident: str, dest_ident: str) -> bool:
+        with self._lock:
+            s_row = self.conn.execute(
+                "SELECT id FROM sources WHERE identifier = ?", (source_ident,)
+            ).fetchone()
+            d_row = self.conn.execute(
+                "SELECT id FROM destinations WHERE identifier = ?", (dest_ident,)
+            ).fetchone()
+
+            if not s_row or not d_row:
+                return False
+
+            cur = self.conn.execute(
+                "DELETE FROM routes WHERE source_id = ? AND dest_id = ?",
+                (s_row["id"], d_row["id"]),
+            )
+            self.conn.commit()
+            removed = cur.rowcount > 0
+            if removed:
+                logger.info("Route removed: %s -> %s", source_ident, dest_ident)
+            return removed
+
+    def remove_all_routes_for_source(self, source_ident: str) -> int:
+        with self._lock:
+            s_row = self.conn.execute(
+                "SELECT id FROM sources WHERE identifier = ?", (source_ident,)
+            ).fetchone()
+            if not s_row:
+                return 0
+            cur = self.conn.execute(
+                "DELETE FROM routes WHERE source_id = ?", (s_row["id"],)
+            )
+            self.conn.commit()
+            return cur.rowcount
+
+    def get_routes_for_source(self, source_id: int) -> List[Dict]:
+        cur = self.conn.execute(
+            """
+            SELECT d.* FROM destinations d
+            JOIN routes r ON d.id = r.dest_id
+            WHERE r.source_id = ?
+        """,
+            (source_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    # ──────────────────────────────────────────────
+    #  Cross-Source Duplicate Filter (1-Hour Window)
+    # ──────────────────────────────────────────────
+
+    def check_and_mark_dedup(self, raw_text: str, source_id: int) -> bool:
+        """
+        Check if content was seen within the 1-hour window.
+        Returns True if DUPLICATE. False if NEW.
+        """
+        c_hash = content_hash(raw_text)
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM dedup_window WHERE first_seen_at < datetime('now', '-1 hour')"
+            )
+
+            cur = self.conn.execute(
+                "SELECT content_hash FROM dedup_window WHERE content_hash = ?",
+                (c_hash,),
+            )
+            if cur.fetchone() is not None:
+                return True  # Duplicate
+
+            self.conn.execute(
+                "INSERT INTO dedup_window (content_hash, first_source_id) VALUES (?, ?)",
+                (c_hash, source_id),
+            )
+            self.conn.commit()
+            return False
+
+    def cleanup_dedup_window(self) -> int:
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM dedup_window WHERE first_seen_at < datetime('now', '-1 hour')"
+            )
+            self.conn.commit()
+            return cur.rowcount
+
+    # ──────────────────────────────────────────────
+    #  Replace & Block Rules
+    # ──────────────────────────────────────────────
+
+    def add_replace_rule(self, old_word: str, new_word: str = "") -> bool:
+        with self._lock:
+            cur = self.conn.execute(
+                "INSERT INTO replace_rules (old_word, new_word) VALUES (?, ?) "
+                "ON CONFLICT(old_word) DO UPDATE SET new_word = excluded.new_word",
+                (old_word, new_word),
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def remove_replace_rule(self, old_word: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM replace_rules WHERE old_word = ?", (old_word,)
+            )
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def get_all_replace_rules(self) -> list[dict]:
+        cur = self.conn.execute("SELECT * FROM replace_rules ORDER BY id")
+        return [dict(row) for row in cur.fetchall()]
+
+    def add_block_rule(self, word: str) -> bool:
+        with self._lock:
+            try:
+                self.conn.execute("INSERT INTO block_rules (word) VALUES (?)", (word,))
+                self.conn.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False
+
+    def remove_block_rule(self, word: str) -> bool:
+        with self._lock:
+            cur = self.conn.execute("DELETE FROM block_rules WHERE word = ?", (word,))
+            self.conn.commit()
+            return cur.rowcount > 0
+
+    def get_all_block_rules(self) -> list[dict]:
+        cur = self.conn.execute("SELECT * FROM block_rules ORDER BY id")
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_all_block_words(self) -> list[str]:
+        cur = self.conn.execute("SELECT word FROM block_rules")
+        return [row["word"] for row in cur.fetchall()]
+
+    # ──────────────────────────────────────────────
+    #  Settings & Stats
+    # ──────────────────────────────────────────────
+
     def set_header(self, text: str) -> None:
         self._set_setting("header", text)
 
@@ -537,7 +553,6 @@ class Database:
     def clear_header(self) -> None:
         self._set_setting("header", "")
 
-    # -- Footer --
     def set_footer(self, text: str) -> None:
         self._set_setting("footer", text)
 
@@ -547,14 +562,12 @@ class Database:
     def clear_footer(self) -> None:
         self._set_setting("footer", "")
 
-    # -- Pause / Resume --
     def is_paused(self) -> bool:
         return self._get_setting("paused", "false") == "true"
 
     def set_paused(self, paused: bool) -> None:
         self._set_setting("paused", "true" if paused else "false")
 
-    # -- Forward Delay --
     def get_forward_delay(self) -> float:
         try:
             return float(self._get_setting("forward_delay", "3.0"))
@@ -564,9 +577,7 @@ class Database:
     def set_forward_delay(self, seconds: float) -> None:
         self._set_setting("forward_delay", str(seconds))
 
-    # -- Stats --
     def increment_stat(self, key: str) -> None:
-        """Atomically increment a numeric stat ('total_forwarded' or 'total_skipped')."""
         with self._lock:
             self.conn.execute(
                 "UPDATE settings SET value = CAST(value AS INTEGER) + 1 WHERE key = ?",
@@ -589,25 +600,10 @@ class Database:
             "forward_delay": self.get_forward_delay(),
         }
 
-    # ──────────────────────────────────────────────
-    #  Forward History (dedup + log)
-    # ──────────────────────────────────────────────
-
-    def is_duplicate(self, source_id: int, message_text: str) -> bool:
-        """
-        Check if this message has already been forwarded from this source.
-        Uses SHA256 of the message text as hash.
-        """
-        msg_hash = hashlib.sha256(message_text.encode("utf-8")).hexdigest()
-        cur = self.conn.execute(
-            "SELECT id FROM forward_history WHERE source_id = ? AND message_hash = ?",
-            (source_id, msg_hash),
-        )
-        return cur.fetchone() is not None
-
-    def log_forward(self, source_id: int, message_text: str, status: str = "forwarded") -> None:
-        """Record a forward attempt (for dedup & stats)."""
-        msg_hash = hashlib.sha256(message_text.encode("utf-8")).hexdigest()
+    def log_forward(
+        self, source_id: int, message_text: str, status: str = "forwarded"
+    ) -> None:
+        msg_hash = content_hash(message_text) if message_text else "empty"
         with self._lock:
             try:
                 self.conn.execute(
@@ -616,7 +612,6 @@ class Database:
                 )
                 self.conn.commit()
             except sqlite3.IntegrityError:
-                # Already exists — still counts as duplicate
                 pass
 
     def get_forward_count(self) -> int:
@@ -627,44 +622,31 @@ class Database:
 
     def get_recent_history(self, limit: int = 20) -> list[dict]:
         cur = self.conn.execute(
-            """SELECT fh.id, sc.username AS source, fh.status, fh.forwarded_at
+            """SELECT fh.id, s.identifier AS source, fh.status, fh.forwarded_at
                FROM forward_history fh
-               LEFT JOIN source_channels sc ON sc.id = fh.source_id
+               LEFT JOIN sources s ON s.id = fh.source_id
                ORDER BY fh.id DESC LIMIT ?""",
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]
 
-    # ──────────────────────────────────────────────
-    #  Cleanup
-    # ──────────────────────────────────────────────
-
     def prune_history(self, retention_days: int) -> int:
-        """Delete forward_history rows older than retention_days. Returns rows deleted."""
         if retention_days <= 0:
             return 0
         with self._lock:
             cur = self.conn.execute(
-                "DELETE FROM forward_history "
-                "WHERE forwarded_at < datetime('now', ?)",
+                "DELETE FROM forward_history WHERE forwarded_at < datetime('now', ?)",
                 (f"-{int(retention_days)} days",),
             )
             self.conn.commit()
-            deleted = cur.rowcount
-            if deleted:
-                logger.info("Pruned %d history rows older than %d days.", deleted, retention_days)
-            return deleted
+            return cur.rowcount
 
     def vacuum(self) -> None:
-        """Rebuild the DB to reclaim disk space after deletes.
-        Must run outside a transaction; uses short exclusive lock."""
         with self._lock:
             try:
                 self.conn.execute("VACUUM")
-                logger.info("VACUUM complete — disk space reclaimed.")
-            except sqlite3.OperationalError as e:
-                logger.warning("VACUUM skipped: %s", e)
+            except sqlite3.OperationalError:
+                pass
 
     def close(self) -> None:
         self.conn.close()
-        logger.info("Database connection closed.")
