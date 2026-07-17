@@ -580,8 +580,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     welcome = (
         "👋 <b>Welcome to Auto-Forwarding Bot Admin!</b>\n\n"
-        "Use the menu ↙️ (type /) to see all commands.\n"
-        "To get started, try /status or /list_sources."
+        "To see the full Pro User Manual and learn how to use this bot, type <code>/help</code>.\n"
+        "You can also use the blue <b>Menu</b> button ↙️ to see all commands at a glance."
     )
     await update.message.reply_text(welcome, parse_mode="HTML")
 
@@ -590,16 +590,40 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _admin_only(update):
         return
     # Now that we registered commands with Telegram, the built-in menu works.
-    await update.message.reply_text(
-        "💡 <b>Help</b>\n\n"
-        "All commands are now available in the bot menu.\n"
-        "Tap the blue <code>Menu</code> button or type <code>/</code> to see them.\n\n"
-        "<i>Quick setup:</i>\n"
-        "1. /add_dest @MyBot\n"
-        "2. /set_dest @MyBot\n"
-        "3. /add_source @SourceChannel",
-        parse_mode="HTML",
+    help_text = (
+        "📘 <b>PRO USER MANUAL — Telegram Auto-Forwarding Bot</b>\n\n"
+        "<i>Use this guide to master your bot's features. Note: The bot uses a 1-hour cross-channel duplicate filter automatically.</i>\n\n"
+        "📡 <b>SOURCES & DESTINATIONS (SETUP)</b>\n"
+        "▪️ <code>/add_source &lt;@username/ID&gt;</code> — Start monitoring a channel for posts\n"
+        "▪️ <code>/remove_source &lt;@username/ID&gt;</code> — Stop monitoring a channel\n"
+        "▪️ <code>/list_sources</code> — See all monitored channels and their routes\n"
+        "▪️ <code>/add_dest &lt;@username/ID&gt;</code> — Register a destination channel/group/bot\n"
+        "▪️ <code>/remove_dest &lt;@username/ID&gt;</code> — Remove a destination\n"
+        "▪️ <code>/list_dests</code> — See all available destinations\n\n"
+        "🎯 <b>ROUTING (WHERE POSTS GO)</b>\n"
+        "▪️ <code>/set_dest &lt;@username/ID&gt;</code> — <b>(Recommended)</b> Set a GLOBAL destination where all posts go by default.\n"
+        "▪️ <code>/show_dest</code> — See current global destination\n"
+        "▪️ <code>/clear_dest</code> — Remove global destination\n"
+        "▪️ <code>/link_source &lt;source&gt; &lt;dest&gt;</code> — <i>(Advanced)</i> Route a specific source to a specific destination (overrides global)\n"
+        "▪️ <code>/unlink_source &lt;source&gt; &lt;dest&gt;</code> — Remove a specific route\n\n"
+        "✍️ <b>CUSTOMIZATION (FILTERS & EDITS)</b>\n"
+        "▪️ <code>/add_replace &lt;old&gt; &lt;new&gt;</code> — Auto-replace words (e.g., <i>/add_replace Amazon Flipkart</i>)\n"
+        "▪️ <code>/remove_replace &lt;old&gt;</code> — Remove a replacement rule\n"
+        "▪️ <code>/list_replaces</code> — See all replacement rules\n"
+        "▪️ <code>/add_block &lt;word&gt;</code> — Completely skip posts containing this word\n"
+        "▪️ <code>/remove_block &lt;word&gt;</code> — Remove a blocked word\n"
+        "▪️ <code>/list_blocks</code> — See all blocked words\n"
+        "▪️ <code>/set_header &lt;text&gt;</code> — Add text at the top of every post\n"
+        "▪️ <code>/set_footer &lt;text&gt;</code> — Add text at the bottom of every post\n"
+        "▪️ <code>/clear_header</code> & <code>/clear_footer</code> — Remove header/footer\n\n"
+        "⚙️ <b>BOT CONTROLS & DASHBOARD</b>\n"
+        "▪️ <code>/status</code> — Open the Interactive Admin Dashboard (Pause/Resume/Stats)\n"
+        "▪️ <code>/stats</code> — View lifetime stats and recent forwarded/skipped history\n"
+        "▪️ <code>/pause</code> / <code>/resume</code> — Manually stop/start forwarding\n"
+        "▪️ <code>/set_delay &lt;seconds&gt;</code> — Add delay to avoid Telegram flood limits (Default: 3s)\n\n"
+        "<i>💡 Tip: You can also tap the blue <b>Menu</b> button next to the chat box to see all commands!</i>"
     )
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 # ────────────────────────────────────────────────────────────
