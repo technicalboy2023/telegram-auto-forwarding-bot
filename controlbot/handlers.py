@@ -632,7 +632,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode="HTML",
         )
     elif data == "cmd_stats":
-        st = db.get_stats()
+        st = db.get_all_stats()
         recent = db.get_recent_history(limit=5)
         msg = (
             f"📈 <b>Lifetime Statistics</b>\n\n"

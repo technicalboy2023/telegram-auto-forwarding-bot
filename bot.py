@@ -148,6 +148,8 @@ def main():
             logger.info("Control Bot (PTB) starting polling...")
             try:
                 await ptb_app.initialize()
+                if ptb_app.post_init:
+                    await ptb_app.post_init(ptb_app)
                 await ptb_app.start()
                 await ptb_app.updater.start_polling(drop_pending_updates=True)
                 logger.info("Control Bot is ready — listening for commands.")
