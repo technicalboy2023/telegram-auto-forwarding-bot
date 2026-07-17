@@ -616,12 +616,58 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await query.answer()
     data = query.data
+    db: Database = context.bot_data["db"]
+    msg_target = query.message  # Use callback's message, NOT update.message
 
     if data == "cmd_pause":
-        await pause(update, context)
+        db.set_paused(True)
+        await msg_target.reply_text(
+            "⏸️ <b>Forwarding Paused</b>\nThe bot will ignore new posts until resumed.",
+            parse_mode="HTML",
+        )
     elif data == "cmd_resume":
-        await resume(update, context)
+        db.set_paused(False)
+        await msg_target.reply_text(
+            "▶️ <b>Forwarding Resumed</b>\nThe bot is now monitoring for new posts.",
+            parse_mode="HTML",
+        )
     elif data == "cmd_stats":
-        await stats(update, context)
+        st = db.get_stats()
+        recent = db.get_recent_history(limit=5)
+        msg = (
+            f"📈 <b>Lifetime Statistics</b>\n\n"
+            f"✅ Total Forwarded: <b>{st['total_forwarded']}</b>\n"
+            f"🚫 Total Skipped: <b>{st['total_skipped']}</b>\n\n"
+            f"📝 <b>Recent Activity (Last 5):</b>\n"
+        )
+        if not recent:
+            msg += "<i>No recent activity found.</i>"
+        else:
+            for r in recent:
+                src = r["source"] or "Unknown"
+                status_ico = "✅" if r["status"] == "forwarded" else "❌"
+                msg += f"{status_ico} <code>{_escape_html(src)}</code> <i>({r['forwarded_at']})</i>\n"
+        await msg_target.reply_text(msg, parse_mode="HTML")
     elif data == "cmd_sources":
-        await list_sources(update, context)
+        sources = db.get_all_sources()
+        if not sources:
+            await msg_target.reply_text("📭 No source channels are being monitored.")
+        else:
+            lines = ["📡 <b>Monitored Sources:</b>\n"]
+            for src in sources:
+                title = src["title"] if src["title"] else "Unknown"
+                ident = src["identifier"]
+                lines.append(f"🔸 <b>{_escape_html(title)}</b>")
+                lines.append(f"   Identifier: <code>{_escape_html(ident)}</code>")
+                if src["entity_type"] != "unknown":
+                    lines.append(f"   Type: {src['entity_type']}")
+                # Show routes for this source
+                routes = db.get_routes_for_source(src["id"])
+                if routes:
+                    dest_names = [r["dest_identifier"] for r in routes]
+                    lines.append(f"   Routes: {', '.join(dest_names)}")
+                else:
+                    lines.append("   Routes: <i>global default</i>")
+                lines.append("")
+            await msg_target.reply_text("\n".join(lines), parse_mode="HTML")
+
